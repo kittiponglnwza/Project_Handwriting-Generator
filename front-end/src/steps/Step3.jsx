@@ -126,6 +126,7 @@ function median(values) {
 
 // Detect blue registration dots (from template corner markers) in imageData.
 // Returns array of {x, y} center positions.
+// ⚠️ Pre-filters red-dominant pixels (handwriting ink) ก่อน detect เพื่อกัน false positive
 function detectRegDots(imageData, pageWidth, pageHeight) {
   const data = imageData
   const dots = []
@@ -137,6 +138,8 @@ function detectRegDots(imageData, pageWidth, pageHeight) {
       const idx = (y * pageWidth + x) * 4
       const r = data[idx], g = data[idx + 1], b = data[idx + 2], a = data[idx + 3]
       if (a < 100) continue
+      // ❌ ข้ามลายมือ: red-dominant pixel (ปากกาแดง GoodNotes)
+      if (r > 160 && r - b > 60 && r - g > 40) continue
       // Blue registration dot: b dominant, moderate saturation
       if (b < 140 || b - r < 40 || b - g < 30) continue
       if (visited[y * pageWidth + x]) continue
@@ -150,6 +153,8 @@ function detectRegDots(imageData, pageWidth, pageHeight) {
         if (visited[cy * pageWidth + cx]) continue
         const i2 = (cy * pageWidth + cx) * 4
         const r2 = data[i2], g2 = data[i2+1], b2 = data[i2+2], a2 = data[i2+3]
+        // ❌ ข้ามลายมือใน flood-fill ด้วย
+        if (r2 > 160 && r2 - b2 > 60 && r2 - g2 > 40) continue
         if (a2 < 80 || b2 < 120 || b2 - r2 < 30 || b2 - g2 < 20) continue
         visited[cy * pageWidth + cx] = 1
         count++
@@ -481,7 +486,9 @@ function buildInkOnlyImageData(imageData, width, height) {
       const a = data[idx + 3]
       if (isGuideTone(r, g, b, a)) rowGuideCount[y] += 1
       const lum = r * 0.2126 + g * 0.7152 + b * 0.0722
-      if (a > 16 && lum < 115) rowDarkCount[y] += 1
+      // ❌ ไม่นับ red-dominant pixel (ลายมือ) เป็น dark — กันรบกวน guide row detection
+      const isRedInk = r > 160 && r - b > 60 && r - g > 40
+      if (a > 16 && lum < 115 && !isRedInk) rowDarkCount[y] += 1
     }
   }
 
@@ -879,6 +886,8 @@ function getBlueSignal(data, pageWidth, pageHeight, x, y) {
   const r = data[idx]
   const g = data[idx + 1]
   const b = data[idx + 2]
+  // ❌ ข้าม red-dominant pixel (ลายมือปากกาแดง GoodNotes) — ไม่ให้รบกวน guide line signal
+  if (r > 160 && r - b > 60 && r - g > 40) return 0
   return Math.max(0, b - (r + g) * 0.5)
 }
 
@@ -1167,11 +1176,14 @@ function GridDebugOverlay({ pageRef, pageVersion, chars, calibration }) {
         }
         pageMaxCells = Math.min(pageMaxCells, remaining)
       }
+      // Hard cap: หน้านึงมีได้สูงสุด 6×6 = 36 ช่อง
+      pageMaxCells = Math.min(pageMaxCells, GRID_COLS * 6)
       if (pageMaxCells <= 0) continue
 
       const pageCellFrom = page.pageMeta?.cellFrom > 0 ? page.pageMeta.cellFrom : pageStartIndex + 1
 
-      const pageCellRectsOrdered =
+      // ⚠️ ใช้ let เพราะต้อง reassign หลัง apply calibration offset
+      let pageCellRectsOrdered =
         page.regDots?.length >= 4
           ? buildOrderedCellRectsForPage(page, pageCellFrom, pageMaxCells)
           : null
@@ -1183,7 +1195,7 @@ function GridDebugOverlay({ pageRef, pageVersion, chars, calibration }) {
         }))
       }
 
-      // Step 2: geometry for drawing — fallback when dots/anchors are insufficient.
+      // fallback geometry เมื่อไม่มี reg dots
       const gridGeom = pageCellRectsOrdered
         ? null
         : getGridGeometry(pageWidth, pageHeight, pageMaxCells, pageGeomCalib)
@@ -1196,27 +1208,24 @@ function GridDebugOverlay({ pageRef, pageVersion, chars, calibration }) {
       const ctx = canvas.getContext("2d")
       ctx.save(); ctx.scale(scaleF, scaleF); ctx.drawImage(srcCtx.canvas, 0, 0); ctx.restore()
       ctx.save(); ctx.scale(scaleF, scaleF)
+
       for (let i = 0; i < pageMaxCells; i++) {
         const targetChar = String(chars[pageStartIndex + i] || "")
 
-        let cx
-        let cy
-        let outerW
-        let outerH
-        let innerSide
-        let innerInset
+        let cx, cy, outerW, outerH, cropX, cropY, cropSize
 
-        if (pageCellRectsOrdered) {
+        if (pageCellRectsOrdered && pageCellRectsOrdered[i]) {
           const rect = pageCellRectsOrdered[i]
           cx = Math.round(rect.x)
           cy = Math.round(rect.y)
           outerW = Math.round(rect.w)
           outerH = Math.round(rect.h)
-
-          const insetR = Math.round(rect.w * GRID_CONFIG.insetRatio)
-          innerSide = Math.max(20, Math.round(Math.min(rect.w, rect.h) - insetR * 2))
-          innerInset = Math.round(Math.min(rect.w, rect.h) * GRID_CONFIG.insetRatio)
-        } else {
+          // crop zone ใช้ logic เดียวกับ extractGlyphsFromCanvas
+          const insetR = Math.round(Math.min(rect.w, rect.h) * GRID_CONFIG.insetRatio)
+          cropSize = Math.max(20, Math.round(Math.min(rect.w, rect.h) - insetR * 2))
+          cropX = clamp(cx + insetR, 0, Math.max(0, pageWidth - cropSize))
+          cropY = clamp(cy + insetR, 0, Math.max(0, pageHeight - cropSize))
+        } else if (gridGeom) {
           const { gap, cellSize, startX, startY } = gridGeom
           const row = Math.floor(i / GRID_COLS)
           const col = i % GRID_COLS
@@ -1224,17 +1233,27 @@ function GridDebugOverlay({ pageRef, pageVersion, chars, calibration }) {
           cy = Math.round(startY + row * (cellSize + gap))
           outerW = Math.round(cellSize)
           outerH = Math.round(cellSize)
-          innerInset = Math.round(outerW * GRID_CONFIG.insetRatio)
-          innerSide = Math.round(cellSize)
+          const insetR = Math.round(cellSize * GRID_CONFIG.insetRatio)
+          cropSize = Math.max(20, Math.round(cellSize - insetR * 2))
+          cropX = clamp(cx + insetR, 0, Math.max(0, pageWidth - cropSize))
+          cropY = clamp(cy + insetR, 0, Math.max(0, pageHeight - cropSize))
+        } else {
+          continue
         }
 
+        // 🟩 outer cell
         ctx.strokeStyle = "rgba(0,200,80,0.9)"; ctx.lineWidth = 1.5 / scaleF
         ctx.strokeRect(cx, cy, outerW, outerH)
+
+        // 🟦 crop zone — ตรงกับ extractGlyphsFromCanvas จริงๆ
         ctx.strokeStyle = "rgba(30,100,255,0.7)"; ctx.lineWidth = 1 / scaleF
-        ctx.strokeRect(cx + innerInset, cy + innerInset, innerSide - innerInset * 2, innerSide - innerInset * 2)
+        ctx.strokeRect(cropX, cropY, cropSize, cropSize)
+
+        // label ตัวอักษรเป้าหมาย
+        const fontSize = Math.round(cropSize * 0.18)
         ctx.fillStyle = "rgba(0,0,0,0.75)"
-        ctx.font = `bold ${Math.round(innerSide * 0.16)}px sans-serif`
-        ctx.fillText(targetChar, cx + 4, cy + innerSide * 0.21)
+        ctx.font = `bold ${fontSize}px sans-serif`
+        ctx.fillText(targetChar, cropX + 3, cropY + fontSize)
       }
       ctx.restore()
 
@@ -1500,11 +1519,14 @@ export default function Step3({ selected, pdfFile, templateChars = [], onGlyphsU
         }
         pageMaxCells = Math.min(pageMaxCells, chars.length - startIndex)
       }
+      // Hard cap: หน้านึงมีได้สูงสุด 6×6 = 36 ช่อง
+      pageMaxCells = Math.min(pageMaxCells, GRID_COLS * 6)
       if (pageMaxCells <= 0) continue
 
       // Build cell rects from registration dots if available
       const pageCellFrom = page.pageMeta?.cellFrom > 0 ? page.pageMeta.cellFrom : startIndex + 1
-      const pageCellRects =
+      // ⚠️ ใช้ let เพราะต้อง reassign หลัง apply calibration offset
+      let pageCellRects =
         page.regDots?.length >= 4
           ? buildOrderedCellRectsForPage(page, pageCellFrom, pageMaxCells)
           : null
