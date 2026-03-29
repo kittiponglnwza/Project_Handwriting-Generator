@@ -137,8 +137,10 @@ export default function App() {
             </div>
           `
           : `
-            <div class="header header-compact">
+            <div class="header">
+              <h1 class="title">Handwriting Generator Template</h1>
               <p class="meta">Continue template • Page ${pageIndex + 1}/${pageCount}</p>
+              <p class="meta">Cell code format: HGxxx (ใช้ยึดตำแหน่งตอนอัปโหลดกลับใน Step 3)</p>
             </div>
           `
 
@@ -171,10 +173,7 @@ export default function App() {
               padding: 4mm 0 5mm;
               border-bottom: 1px solid #C5D5E6;
             }
-            .header-compact {
-              margin-bottom: 4mm;
-              padding: 2mm 0 3mm;
-            }
+
             .title { font-size: 18px; font-weight: 700; margin: 0 0 3px; }
             .meta { font-size: 11px; color: #4B6480; margin: 0; }
             .grid {
@@ -526,5 +525,3 @@ export default function App() {
     </>
   )
 }
-
-
