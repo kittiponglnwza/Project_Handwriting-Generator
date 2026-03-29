@@ -8,6 +8,7 @@ export default function Group({
   selected,
   onToggle,
   onSelectGroup = () => {},
+  onSelectOnlyGroup = () => {},
   onClearGroup = () => {},
 }) {
   const selectedCount = chars.reduce((count, ch) => (selected.has(ch) ? count + 1 : count), 0)
@@ -44,6 +45,9 @@ export default function Group({
           disabled={allSelected}
         >
           เลือกทั้งหมวด
+        </Btn>
+        <Btn onClick={() => onSelectOnlyGroup(chars)} variant="primary" size="sm">
+          เฉพาะหมวดนี้
         </Btn>
         <Btn
           onClick={() => onClearGroup(chars)}

@@ -83,6 +83,7 @@ export default function Step1({
           selected={selected}
           onToggle={onToggle}
           onSelectGroup={onAddChars}
+          onSelectOnlyGroup={onSelectAll}
           onClearGroup={onRemoveChars}
         />
       ))}

@@ -39,14 +39,11 @@ const FontLoader = () => (
 
 export default function App() {
   const [step, setStep] = useState(1)
-  const [selected, setSelected] = useState(() => {
-    const s = new Set()
-    "กขคงจABC012".split("").forEach(c => s.add(c))
-    return s
-  })
+  const [selected, setSelected] = useState(() => new Set())
   const [uploaded, setUploaded] = useState(false)
   const [uploadedPdf, setUploadedPdf] = useState(null)
   const [templateChars, setTemplateChars] = useState([])
+  const [analyzedGlyphs, setAnalyzedGlyphs] = useState([])
 
   const toggle = ch =>
     setSelected(prev => {
@@ -78,11 +75,13 @@ export default function App() {
   const handleUploadPdf = file => {
     setUploadedPdf(file)
     setUploaded(true)
+    setAnalyzedGlyphs([])
   }
 
   const handleClearPdf = () => {
     setUploadedPdf(null)
     setUploaded(false)
+    setAnalyzedGlyphs([])
   }
 
   const escapeHtml = text =>
@@ -93,6 +92,8 @@ export default function App() {
       .replaceAll('"', "&quot;")
       .replaceAll("'", "&#039;")
 
+  const toCellCode = index => `HG${String(index + 1).padStart(3, "0")}`
+
   const generateTemplatePdf = () => {
     const chars = [...selected]
     if (chars.length === 0) return
@@ -102,10 +103,9 @@ export default function App() {
       .map(
         (ch, index) => `
           <div class="cell">
-            <span class="cell-index">${index + 1}</span>
-            <svg class="trace-svg" viewBox="0 0 100 100" aria-hidden="true">
-              <text x="50" y="56" text-anchor="middle" dominant-baseline="middle" class="trace-char">${escapeHtml(ch)}</text>
-            </svg>
+            <span class="cell-label">${escapeHtml(ch)}</span>
+            <span class="cell-anchor">${toCellCode(index)}</span>
+            <div class="guide guide-top"></div>
             <div class="guide guide-mid"></div>
             <div class="guide guide-base"></div>
           </div>
@@ -126,70 +126,64 @@ export default function App() {
             body {
               margin: 0;
               font-family: "TH Sarabun New", "Noto Sans Thai", "Tahoma", sans-serif;
-              color: #1E3955;
-              background: #F8FBFF;
-            }
-            .header {
-              margin-bottom: 8mm;
-              padding: 6mm 7mm;
-              border: 1.5px dashed #9CB6D3;
-              border-radius: 12px;
+              color: #193656;
               background: #FFFFFF;
             }
-            .title { font-size: 20px; font-weight: 700; margin: 0 0 4px; }
-            .meta { font-size: 12px; color: #4B6480; margin: 0; }
+            .header {
+              margin-bottom: 6mm;
+              padding: 4mm 0 5mm;
+              border-bottom: 1px solid #C5D5E6;
+            }
+            .title { font-size: 18px; font-weight: 700; margin: 0 0 3px; }
+            .meta { font-size: 11px; color: #4B6480; margin: 0; }
             .grid {
               display: grid;
               grid-template-columns: repeat(6, 1fr);
-              gap: 8px;
+              gap: 7px;
             }
             .cell {
               position: relative;
-              border: 1.4px dashed #9CB6D3;
-              border-radius: 10px;
+              border: 1.1px solid #8EA9C7;
+              border-radius: 6px;
               background: #FFFFFF;
               aspect-ratio: 1 / 1;
               overflow: hidden;
             }
-            .cell-index {
+            .cell-label {
               position: absolute;
-              top: 4px;
-              left: 6px;
+              top: 3px;
+              left: 5px;
               font-size: 10px;
-              color: #6E87A3;
+              color: #4F6B89;
               z-index: 2;
               font-family: "DM Sans", Arial, sans-serif;
+              line-height: 1;
             }
-            .trace-svg {
-              width: 100%;
-              height: 100%;
-              display: block;
-            }
-            .trace-char {
-              font-family: "TH Sarabun New", "Noto Sans Thai", "Tahoma", sans-serif;
-              font-size: 58px;
-              fill: rgba(44, 70, 99, 0.03);
-              stroke: #325273;
-              stroke-width: 1.6;
-              stroke-linecap: round;
-              stroke-linejoin: round;
-              stroke-dasharray: 1.2 5.4;
-              paint-order: stroke;
+            .cell-anchor {
+              position: absolute;
+              top: 1px;
+              left: 1px;
+              font-size: 1px;
+              opacity: 0;
+              color: transparent;
+              z-index: 0;
+              user-select: none;
             }
             .guide {
               position: absolute;
-              left: 6%;
-              width: 88%;
-              border-top: 1px dashed #B4C8DF;
+              left: 4%;
+              width: 92%;
+              border-top: 1px solid #A8C1DD;
               pointer-events: none;
             }
-            .guide-mid { top: 42%; }
-            .guide-base { top: 72%; }
+            .guide-top { top: 24%; }
+            .guide-mid { top: 49%; }
+            .guide-base { top: 75%; }
             .footer {
-              margin-top: 6mm;
+              margin-top: 5mm;
               text-align: right;
-              font-size: 11px;
-              color: #6E87A3;
+              font-size: 10px;
+              color: #5C7694;
               font-family: "DM Sans", Arial, sans-serif;
             }
             @media print { .no-print { display: none; } }
@@ -199,6 +193,7 @@ export default function App() {
           <div class="header">
             <h1 class="title">Handwriting Generator Template</h1>
             <p class="meta">Total glyphs: ${chars.length} • Generated: ${escapeHtml(now)}</p>
+            <p class="meta">Cell code format: HGxxx (ใช้ยึดตำแหน่งตอนอัปโหลดกลับใน Step 3)</p>
           </div>
           <div class="grid">${cells}</div>
           <p class="footer">Practice sheet • Trace over the dotted shape</p>
@@ -236,7 +231,18 @@ export default function App() {
     setStep(s => s + 1)
   }
 
-  const canNext = step === 1 ? selected.size > 0 : step === 2 ? uploaded : true
+  const selectedCount = templateChars.length > 0 ? templateChars.length : selected.size
+  const hasChars = selectedCount > 0
+  const canNext = step === 1 ? hasChars : step === 2 ? uploaded && hasChars : true
+
+  const canOpenStep = targetStep => {
+    if (targetStep === 1) return true
+    if (targetStep === 2) return hasChars
+    if (targetStep === 3) return hasChars && uploaded
+    if (targetStep === 4) return hasChars && uploaded
+    if (targetStep === 5) return hasChars && uploaded
+    return false
+  }
   const content = {
     1: (
       <Step1
@@ -249,8 +255,15 @@ export default function App() {
       />
     ),
     2: <Step2 uploaded={uploaded} pdfFile={uploadedPdf} onUpload={handleUploadPdf} onClear={handleClearPdf} />,
-    3: <Step3 selected={selected} pdfFile={uploadedPdf} templateChars={templateChars} />,
-    4: <Step4 />,
+    3: (
+      <Step3
+        selected={selected}
+        pdfFile={uploadedPdf}
+        templateChars={templateChars}
+        onGlyphsUpdate={setAnalyzedGlyphs}
+      />
+    ),
+    4: <Step4 selected={selected} templateChars={templateChars} extractedGlyphs={analyzedGlyphs} />,
     5: <Step5 />,
   }
   const nextLabel = {
@@ -297,7 +310,7 @@ export default function App() {
             {STEPS.map(s => {
               const done = step > s.id
               const active = step === s.id
-              const locked = s.id > step + 1
+              const locked = !canOpenStep(s.id)
               return (
                 <button
                   key={s.id}
@@ -376,7 +389,7 @@ export default function App() {
               <div>
                 <p style={{ fontSize: 11, fontWeight: 500, color: C.ink }}>ลายมือ #1</p>
                 <p style={{ fontSize: 10, color: C.inkLt, marginTop: 1 }}>
-                  {selected.size} glyphs • 50 MB max
+                  {selectedCount} glyphs • 50 MB max
                 </p>
               </div>
             </div>
