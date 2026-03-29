@@ -1,4 +1,4 @@
-import { useState } from "react"
+﻿import { useState } from "react"
 import Btn from "./components/Btn"
 import Step1 from "./steps/Step1"
 import Step2 from "./steps/Step2"
@@ -45,6 +45,8 @@ export default function App() {
     return s
   })
   const [uploaded, setUploaded] = useState(false)
+  const [uploadedPdf, setUploadedPdf] = useState(null)
+  const [templateChars, setTemplateChars] = useState([])
 
   const toggle = ch =>
     setSelected(prev => {
@@ -52,6 +54,36 @@ export default function App() {
       next.has(ch) ? next.delete(ch) : next.add(ch)
       return next
     })
+
+  const selectAllChars = chars => {
+    setSelected(new Set(chars))
+  }
+
+  const addChars = chars =>
+    setSelected(prev => {
+      const next = new Set(prev)
+      chars.forEach(ch => next.add(ch))
+      return next
+    })
+
+  const removeChars = chars =>
+    setSelected(prev => {
+      const next = new Set(prev)
+      chars.forEach(ch => next.delete(ch))
+      return next
+    })
+
+  const clearAllChars = () => setSelected(new Set())
+
+  const handleUploadPdf = file => {
+    setUploadedPdf(file)
+    setUploaded(true)
+  }
+
+  const handleClearPdf = () => {
+    setUploadedPdf(null)
+    setUploaded(false)
+  }
 
   const escapeHtml = text =>
     text
@@ -64,6 +96,7 @@ export default function App() {
   const generateTemplatePdf = () => {
     const chars = [...selected]
     if (chars.length === 0) return
+    setTemplateChars(chars)
 
     const cells = chars
       .map(
@@ -165,10 +198,10 @@ export default function App() {
         <body>
           <div class="header">
             <h1 class="title">Handwriting Generator Template</h1>
-            <p class="meta">Total glyphs: ${chars.length} · Generated: ${escapeHtml(now)}</p>
+            <p class="meta">Total glyphs: ${chars.length} • Generated: ${escapeHtml(now)}</p>
           </div>
           <div class="grid">${cells}</div>
-          <p class="footer">Practice sheet · Trace over the dotted shape</p>
+          <p class="footer">Practice sheet • Trace over the dotted shape</p>
           <script>
             window.addEventListener("load", () => {
               const runPrint = () => setTimeout(() => window.print(), 220);
@@ -205,9 +238,18 @@ export default function App() {
 
   const canNext = step === 1 ? selected.size > 0 : step === 2 ? uploaded : true
   const content = {
-    1: <Step1 selected={selected} onToggle={toggle} />,
-    2: <Step2 uploaded={uploaded} onUpload={() => setUploaded(true)} />,
-    3: <Step3 selected={selected} />,
+    1: (
+      <Step1
+        selected={selected}
+        onToggle={toggle}
+        onSelectAll={selectAllChars}
+        onAddChars={addChars}
+        onRemoveChars={removeChars}
+        onClearAll={clearAllChars}
+      />
+    ),
+    2: <Step2 uploaded={uploaded} pdfFile={uploadedPdf} onUpload={handleUploadPdf} onClear={handleClearPdf} />,
+    3: <Step3 selected={selected} pdfFile={uploadedPdf} templateChars={templateChars} />,
     4: <Step4 />,
     5: <Step5 />,
   }
@@ -247,7 +289,7 @@ export default function App() {
               Generator
             </p>
             <p style={{ fontSize: 10, color: C.inkLt, marginTop: 6, letterSpacing: "0.04em" }}>
-              PDF · Rendering Engine · v2.7
+              PDF • Rendering Engine • v2.7
             </p>
           </div>
 
@@ -334,7 +376,7 @@ export default function App() {
               <div>
                 <p style={{ fontSize: 11, fontWeight: 500, color: C.ink }}>ลายมือ #1</p>
                 <p style={{ fontSize: 10, color: C.inkLt, marginTop: 1 }}>
-                  {selected.size} glyphs · 50 MB max
+                  {selected.size} glyphs • 50 MB max
                 </p>
               </div>
             </div>
@@ -359,7 +401,7 @@ export default function App() {
                 {STEPS[step - 1].label}
               </span>
               <span style={{ fontSize: 12, color: C.inkLt, marginLeft: 8 }}>
-                — Step {step} of {STEPS.length}
+                • Step {step} of {STEPS.length}
               </span>
             </div>
             <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
@@ -400,3 +442,5 @@ export default function App() {
     </>
   )
 }
+
+

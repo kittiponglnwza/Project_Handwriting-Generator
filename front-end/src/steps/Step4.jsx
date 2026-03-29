@@ -1,10 +1,10 @@
-import C from "../styles/colors"
+﻿import C from "../styles/colors"
 
 const DNA_PARAMS = [
-  { name: "Spacing tendency", dist: "Normal  σ = 0.05em", value: 62 },
-  { name: "Baseline offset", dist: "Normal  μ = 0  σ = 1.5px", value: 45 },
-  { name: "Rotation tendency", dist: "Uniform  ±1.5°", value: 50 },
-  { name: "Scale variation", dist: "Normal  σ = 0.03", value: 38 },
+  { name: "Spacing tendency", dist: "Normal • σ = 0.05em", value: 62 },
+  { name: "Baseline offset", dist: "Normal • μ = 0 • σ = 1.5px", value: 45 },
+  { name: "Rotation tendency", dist: "Uniform ±1.5°", value: 50 },
+  { name: "Scale variation", dist: "Normal • σ = 0.03", value: 38 },
 ]
 
 const SEEDS = ["0x7f3a2c91", "0x3b9e12f4", "0xa1c8e302", "0x55d0f7ab"]
@@ -40,7 +40,7 @@ export default function Step4() {
             seed: <span style={{ color: "#7CC4B0", fontWeight: 600 }}>{seed}</span>
           </span>
           <span style={{ fontSize: 10, color: "#5C5340", letterSpacing: "0.05em" }}>
-            Mulberry32 · deterministic
+            Mulberry32 • deterministic
           </span>
         </div>
       </div>

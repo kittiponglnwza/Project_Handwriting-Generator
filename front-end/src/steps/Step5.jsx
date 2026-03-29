@@ -1,4 +1,4 @@
-import { useState } from "react"
+﻿import { useState } from "react"
 import Divider from "../components/Divider"
 import Tag from "../components/Tag"
 import C from "../styles/colors"
@@ -29,7 +29,7 @@ export default function Step5() {
             gap: 10,
           }}
         >
-          <Tag color="draft">Draft — Canvas</Tag>
+          <Tag color="draft">Draft • Canvas</Tag>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <span style={{ fontSize: 10, color: C.inkLt }}>ขนาด</span>
@@ -143,7 +143,7 @@ export default function Step5() {
           <p style={{ fontSize: 13, fontWeight: 500, color: "#FBF9F5", marginBottom: 4 }}>
             Export PDF
           </p>
-          <p style={{ fontSize: 10, color: "#7C6E58" }}>SVG Mode · Full DNA · Deterministic</p>
+          <p style={{ fontSize: 10, color: "#7C6E58" }}>SVG Mode • Full DNA • Deterministic</p>
         </button>
         <button
           className="glyph-card"
@@ -156,11 +156,11 @@ export default function Step5() {
             cursor: "pointer",
           }}
         >
-          <div style={{ fontSize: 24, marginBottom: 10 }}>◈</div>
+          <div style={{ fontSize: 24, marginBottom: 10 }}>✈</div>
           <p style={{ fontSize: 13, fontWeight: 500, color: C.ink, marginBottom: 4 }}>
             Export SVG
           </p>
-          <p style={{ fontSize: 10, color: C.inkLt }}>Vector · โครงสร้างเดิม</p>
+          <p style={{ fontSize: 10, color: C.inkLt }}>Vector • โครงสร้างเดิม</p>
         </button>
       </div>
     </div>
