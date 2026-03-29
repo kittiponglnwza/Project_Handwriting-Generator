@@ -1,4 +1,4 @@
-﻿import { useState } from "react"
+import { useState } from "react"
 import Btn from "./components/Btn"
 import Step1 from "./steps/Step1"
 import Step2 from "./steps/Step2"
@@ -94,6 +94,15 @@ export default function App() {
 
   const toCellCode = index => `HG${String(index + 1).padStart(3, "0")}`
 
+  // QR payload: base64url UTF-8 JSON array — one string per cell on this page (order = left→right, top→bottom)
+  const encodeHgQrCharsPayload = charsOnPage => {
+    const json = JSON.stringify(charsOnPage)
+    const bytes = new TextEncoder().encode(json)
+    let binary = ""
+    for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i])
+    return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
+  }
+
   // Self-contained QR encoder — no CDN needed
   // Uses qrcode-generator loaded dynamically once, cached on window
   const ensureQrLib = () => {
@@ -175,9 +184,14 @@ export default function App() {
         rows.push(`<div class="row">${cells}</div>`)
       }
 
-      // QR encodes: page info + cell range so Step3 can read it even after GoodNotes rescale
-      const qrText = `HG:p=${pageIndex + 1}/${pageCount},c=${cellFrom}-${cellTo},n=${pageCellCount},t=${chars.length}`
-      const qrDataUrl = await makeQrDataUrl(qrText)
+      // QR: page + cell range + exact character list on this page (Step 3 uses this as ground truth)
+      let qrPayload = `HG:p=${pageIndex + 1}/${pageCount},c=${cellFrom}-${cellTo},n=${pageCellCount},t=${chars.length},j=${encodeHgQrCharsPayload(pageChars)}`
+      let qrDataUrl = await makeQrDataUrl(qrPayload)
+      if (!qrDataUrl || qrPayload.length > 2300) {
+        qrPayload = `HG:p=${pageIndex + 1}/${pageCount},c=${cellFrom}-${cellTo},n=${pageCellCount},t=${chars.length}`
+        qrDataUrl = await makeQrDataUrl(qrPayload)
+      }
+      const qrText = qrPayload
       const qrImg = qrDataUrl
         ? `<img src="${qrDataUrl}" class="page-qr" title="${qrText}" />`
         : `<span class="page-qr-fallback">${qrText}</span>`

@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { GlobalWorkerOptions, getDocument } from "pdfjs-dist"
 import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url"
 import Btn from "../components/Btn"
@@ -10,7 +10,27 @@ GlobalWorkerOptions.workerSrc = pdfWorker
 const GRID_COLS = 6
 const TEMPLATE_CODE_RE = /^HG(\d{1,4})$/i
 const HGMETA_RE = /HGMETA:page=(\d+),totalPages=(\d+),from=(\d+),to=(\d+),count=(\d+),total=(\d+)/
-const HGQR_RE = /HG:p=(\d+)\/(\d+),c=(\d+)-(\d+),n=(\d+),t=(\d+)/
+// Optional ,j=… = base64url(JSON array of one string per cell on this page)
+const HGQR_RE =
+  /^HG:p=(\d+)\/(\d+),c=(\d+)-(\d+),n=(\d+),t=(\d+)(?:,j=([A-Za-z0-9_-]+))?$/
+
+function decodeHgQrCharsPayload(b64url) {
+  if (!b64url) return null
+  try {
+    let b64 = b64url.replace(/-/g, "+").replace(/_/g, "/")
+    const pad = b64.length % 4
+    if (pad) b64 += "=".repeat(4 - pad)
+    const binary = atob(b64)
+    const bytes = new Uint8Array(binary.length)
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i)
+    const json = new TextDecoder("utf-8").decode(bytes)
+    const arr = JSON.parse(json)
+    if (!Array.isArray(arr)) return null
+    return arr.map(x => (x == null ? "" : String(x)))
+  } catch {
+    return null
+  }
+}
 
 // Scan imageData for QR code using jsQR (loaded via CDN)
 function decodeQRFromImageData(imageData, width, height) {
@@ -19,20 +39,41 @@ function decodeQRFromImageData(imageData, width, height) {
     if (!jsQR) return null
     const result = jsQR(imageData, width, height, { inversionAttempts: "dontInvert" })
     if (!result?.data) return null
-    const m = result.data.match(HGQR_RE)
+    const m = result.data.trim().match(HGQR_RE)
     if (!m) return null
+    const cellCount = Number(m[5])
+    let charsFromQr = m[7] ? decodeHgQrCharsPayload(m[7]) : null
+    if (charsFromQr && charsFromQr.length !== cellCount) charsFromQr = null
     return {
       page: Number(m[1]),
       totalPages: Number(m[2]),
       cellFrom: Number(m[3]),
       cellTo: Number(m[4]),
-      cellCount: Number(m[5]),
+      cellCount,
       totalGlyphs: Number(m[6]),
+      charsFromQr: charsFromQr || null,
       qrBounds: result.location,
     }
   } catch {
     return null
   }
+}
+
+function extractCharsetIfCompleteInQr(pages) {
+  if (!pages?.length) return null
+  const sorted = [...pages].sort((a, b) => a.pageNumber - b.pageNumber)
+  const acc = []
+  let expectedTotal = null
+  for (const p of sorted) {
+    const m = p.pageMeta
+    if (!m || !Number.isFinite(m.cellCount) || m.cellCount < 1) return null
+    if (expectedTotal == null && Number.isFinite(m.totalGlyphs)) expectedTotal = m.totalGlyphs
+    const c = m.charsFromQr
+    if (!Array.isArray(c) || c.length !== m.cellCount) return null
+    acc.push(...c)
+  }
+  if (Number.isFinite(expectedTotal) && acc.length !== expectedTotal) return null
+  return acc.length > 0 ? acc : null
 }
 const TEMPLATE_INDEX_RE = /^(\d{1,4})$/
 const MIN_TRUSTED_INDEX_TARGETS = 6
@@ -60,6 +101,15 @@ const TEMPLATE_CALIBRATION = {
   offsetY: -136,
   cellAdjust: 0,
   gapAdjust: 0,
+}
+
+function mergeCalibration(base, manual = DEFAULT_CALIBRATION) {
+  return {
+    offsetX: (base?.offsetX || 0) + (manual?.offsetX || 0),
+    offsetY: (base?.offsetY || 0) + (manual?.offsetY || 0),
+    cellAdjust: (base?.cellAdjust || 0) + (manual?.cellAdjust || 0),
+    gapAdjust: (base?.gapAdjust || 0) + (manual?.gapAdjust || 0),
+  }
 }
 
 function clamp(value, min, max) {
@@ -168,6 +218,178 @@ function buildCellRectsFromDots(dots, pageWidth, pageHeight, expectedCols, expec
   }
 
   return cellRects.length > 0 ? cellRects : null
+}
+
+function sortCellRectsReadingOrder(rects) {
+  if (!rects?.length) return []
+  const avgH = rects.reduce((s, r) => s + r.h, 0) / rects.length
+  const rowTol = Math.max(14, avgH * 0.45)
+  return [...rects].sort((a, b) => {
+    const cyA = a.y + a.h * 0.5
+    const cyB = b.y + b.h * 0.5
+    if (Math.abs(cyA - cyB) > rowTol) return cyA - cyB
+    return a.x + a.w * 0.5 - (b.x + b.w * 0.5)
+  })
+}
+
+// PDF.js: y is near baseline in top-left canvas space; nudge up into the cell body.
+function anchorPointForCellIndexBox(anchor) {
+  const ax = anchor.x + (anchor.width || 0) * 0.5
+  const ay = (anchor.y || 0) - (anchor.height || 0) * 0.55
+  return { ax, ay }
+}
+
+function pointInRectLoose(px, py, r, pad = 8) {
+  return (
+    px >= r.x - pad &&
+    px <= r.x + r.w + pad &&
+    py >= r.y - pad &&
+    py <= r.y + r.h + pad
+  )
+}
+
+// Drop spurious grids above/beside the real sheet when dot clustering returns too many cells.
+function filterCellRectsNearAnchorHull(cellRects, anchorByIndex, cellFrom, cellCount) {
+  if (!anchorByIndex?.size || !cellRects?.length) return cellRects
+  let minX = Infinity
+  let maxX = -Infinity
+  let minY = Infinity
+  let maxY = -Infinity
+  let any = false
+  for (let i = 0; i < cellCount; i += 1) {
+    const idx = cellFrom + i
+    const a = anchorByIndex.get(idx)
+    if (!a) continue
+    any = true
+    const { ax, ay } = anchorPointForCellIndexBox(a)
+    minX = Math.min(minX, ax - 24)
+    maxX = Math.max(maxX, ax + 24)
+    minY = Math.min(minY, ay - 24)
+    maxY = Math.max(maxY, ay + 24)
+  }
+  if (!any) return cellRects
+  const pad = 48
+  const filtered = cellRects.filter(r => {
+    const cx = r.x + r.w * 0.5
+    const cy = r.y + r.h * 0.5
+    return cx >= minX - pad && cx <= maxX + pad && cy >= minY - pad && cy <= maxY + pad
+  })
+  return filtered.length >= cellCount ? filtered : cellRects
+}
+
+// Map global 1-based cell indices (HGxxx) → one rect per slot, using PDF text anchors for cell numbers.
+function orderCellRectsByAnchorIndex(cellRects, anchorByIndex, cellFrom, cellCount) {
+  if (!Array.isArray(cellRects) || cellRects.length === 0) return null
+  if (!cellCount || cellCount < 1) return null
+
+  const indices = Array.from({ length: cellCount }, (_, i) => cellFrom + i)
+  const assigned = new Map()
+  const usedRi = new Set()
+
+  if (!anchorByIndex || anchorByIndex.size === 0) {
+    const sorted = sortCellRectsReadingOrder(cellRects)
+    return sorted.length >= cellCount ? sorted.slice(0, cellCount) : null
+  }
+
+  // 1) Prefer rects that contain the anchor point (smallest area wins).
+  for (const idx of indices) {
+    const a = anchorByIndex.get(idx)
+    if (!a) continue
+    const { ax, ay } = anchorPointForCellIndexBox(a)
+    let bestRi = -1
+    let bestArea = Infinity
+    for (let ri = 0; ri < cellRects.length; ri += 1) {
+      if (usedRi.has(ri)) continue
+      const r = cellRects[ri]
+      if (pointInRectLoose(ax, ay, r)) {
+        const area = r.w * r.h
+        if (area < bestArea) {
+          bestArea = area
+          bestRi = ri
+        }
+      }
+    }
+    if (bestRi >= 0) {
+      usedRi.add(bestRi)
+      assigned.set(idx, cellRects[bestRi])
+    }
+  }
+
+  // 2) Nearest centroid for remaining anchors.
+  for (const idx of indices) {
+    if (assigned.has(idx)) continue
+    const a = anchorByIndex.get(idx)
+    if (!a) continue
+    const { ax, ay } = anchorPointForCellIndexBox(a)
+    let bestRi = -1
+    let bestD = Infinity
+    for (let ri = 0; ri < cellRects.length; ri += 1) {
+      if (usedRi.has(ri)) continue
+      const r = cellRects[ri]
+      const rcx = r.x + r.w * 0.5
+      const rcy = r.y + r.h * 0.5
+      const d = (ax - rcx) ** 2 + (ay - rcy) ** 2
+      if (d < bestD) {
+        bestD = d
+        bestRi = ri
+      }
+    }
+    if (bestRi >= 0) {
+      usedRi.add(bestRi)
+      assigned.set(idx, cellRects[bestRi])
+    }
+  }
+
+  // 3) Fill holes with unused rects in reading order (handles missing text anchors).
+  const missing = indices.filter(idx => !assigned.has(idx))
+  const unusedRis = []
+  for (let ri = 0; ri < cellRects.length; ri += 1) {
+    if (!usedRi.has(ri)) unusedRis.push(ri)
+  }
+  unusedRis.sort((riA, riB) => {
+    const a = cellRects[riA]
+    const b = cellRects[riB]
+    const cyA = a.y + a.h * 0.5
+    const cyB = b.y + b.h * 0.5
+    const avgH = (a.h + b.h) * 0.5
+    if (Math.abs(cyA - cyB) > avgH * 0.45) return cyA - cyB
+    return a.x + a.w * 0.5 - (b.x + b.w * 0.5)
+  })
+  missing.forEach((idx, j) => {
+    if (j >= unusedRis.length) return
+    const ri = unusedRis[j]
+    usedRi.add(ri)
+    assigned.set(idx, cellRects[ri])
+  })
+
+  const ordered = indices.map(idx => assigned.get(idx))
+  if (ordered.some(r => !r)) return null
+  return ordered
+}
+
+function buildOrderedCellRectsForPage(page, pageCellFrom, pageMaxCells) {
+  if (!page?.regDots?.length || pageMaxCells <= 0) return null
+  const cellRectsRaw = buildCellRectsFromDots(
+    page.regDots,
+    page.pageWidth,
+    page.pageHeight,
+    GRID_COLS,
+    pageMaxCells
+  )
+  if (!cellRectsRaw?.length) return null
+
+  let pool = cellRectsRaw
+  if (cellRectsRaw.length > pageMaxCells + 2 && page.anchorByIndex?.size) {
+    const filtered = filterCellRectsNearAnchorHull(
+      cellRectsRaw,
+      page.anchorByIndex,
+      pageCellFrom,
+      pageMaxCells
+    )
+    if (filtered.length >= pageMaxCells) pool = filtered
+  }
+
+  return orderCellRectsByAnchorIndex(pool, page.anchorByIndex, pageCellFrom, pageMaxCells)
 }
 
 function buildTargetsFromPages(pages) {
@@ -798,13 +1020,13 @@ function GridDebugOverlay({ pageRef, pageVersion, chars, calibration }) {
       const { ctx: srcCtx, pageWidth, pageHeight } = page
       if (!srcCtx) continue
 
-      const remaining = chars.length - cursor
-      const pageGeomCalib = {
-        offsetX: TEMPLATE_CALIBRATION.offsetX + calibration.offsetX,
-        offsetY: TEMPLATE_CALIBRATION.offsetY + calibration.offsetY,
-        cellAdjust: TEMPLATE_CALIBRATION.cellAdjust + calibration.cellAdjust,
-        gapAdjust: TEMPLATE_CALIBRATION.gapAdjust + calibration.gapAdjust,
-      }
+      const pageStartIndexFromMeta =
+        page.pageMeta?.cellFrom > 0 ? page.pageMeta.cellFrom - 1 : null
+      const pageStartIndex = pageStartIndexFromMeta ?? cursor
+      const remaining = Math.max(0, chars.length - pageStartIndex)
+      if (remaining <= 0) continue
+      const baseCalibration = TEMPLATE_CALIBRATION
+      const pageGeomCalib = mergeCalibration(baseCalibration, calibration)
       // Use HGMETA cellCount if available — exact value written into the PDF
       let pageMaxCells
       if (page.pageMeta?.cellCount > 0) {
@@ -819,8 +1041,24 @@ function GridDebugOverlay({ pageRef, pageVersion, chars, calibration }) {
       }
       if (pageMaxCells <= 0) continue
 
-      // Step 2: geometry for drawing — use pageMaxCells like extractGlyphsFromCanvas
-      const { gap, cellSize, startX, startY } = getGridGeometry(pageWidth, pageHeight, pageMaxCells, pageGeomCalib)
+      const pageCellFrom = page.pageMeta?.cellFrom > 0 ? page.pageMeta.cellFrom : pageStartIndex + 1
+
+      const pageCellRectsOrdered =
+        page.regDots?.length >= 4
+          ? buildOrderedCellRectsForPage(page, pageCellFrom, pageMaxCells)
+          : null
+      if (pageCellRectsOrdered) {
+        pageCellRectsOrdered = pageCellRectsOrdered.map(r => ({
+          ...r,
+          x: r.x + calibration.offsetX,
+          y: r.y + calibration.offsetY,
+        }))
+      }
+
+      // Step 2: geometry for drawing — fallback when dots/anchors are insufficient.
+      const gridGeom = pageCellRectsOrdered
+        ? null
+        : getGridGeometry(pageWidth, pageHeight, pageMaxCells, pageGeomCalib)
 
       const scaleF = DISPLAY_W / pageWidth
       const canvas = document.createElement("canvas")
@@ -831,22 +1069,49 @@ function GridDebugOverlay({ pageRef, pageVersion, chars, calibration }) {
       ctx.save(); ctx.scale(scaleF, scaleF); ctx.drawImage(srcCtx.canvas, 0, 0); ctx.restore()
       ctx.save(); ctx.scale(scaleF, scaleF)
       for (let i = 0; i < pageMaxCells; i++) {
-        const row = Math.floor(i / GRID_COLS)
-        const col = i % GRID_COLS
-        const cx = Math.round(startX + col * (cellSize + gap))
-        const cy = Math.round(startY + row * (cellSize + gap))
-        const inset = Math.round(cellSize * GRID_CONFIG.insetRatio)
+        const targetChar = String(chars[pageStartIndex + i] || "")
+
+        let cx
+        let cy
+        let outerW
+        let outerH
+        let innerSide
+        let innerInset
+
+        if (pageCellRectsOrdered) {
+          const rect = pageCellRectsOrdered[i]
+          cx = Math.round(rect.x)
+          cy = Math.round(rect.y)
+          outerW = Math.round(rect.w)
+          outerH = Math.round(rect.h)
+
+          const insetR = Math.round(rect.w * GRID_CONFIG.insetRatio)
+          innerSide = Math.max(20, Math.round(Math.min(rect.w, rect.h) - insetR * 2))
+          innerInset = Math.round(Math.min(rect.w, rect.h) * GRID_CONFIG.insetRatio)
+        } else {
+          const { gap, cellSize, startX, startY } = gridGeom
+          const row = Math.floor(i / GRID_COLS)
+          const col = i % GRID_COLS
+          cx = Math.round(startX + col * (cellSize + gap))
+          cy = Math.round(startY + row * (cellSize + gap))
+          outerW = Math.round(cellSize)
+          outerH = Math.round(cellSize)
+          innerInset = Math.round(outerW * GRID_CONFIG.insetRatio)
+          innerSide = Math.round(cellSize)
+        }
+
         ctx.strokeStyle = "rgba(0,200,80,0.9)"; ctx.lineWidth = 1.5 / scaleF
-        ctx.strokeRect(cx, cy, cellSize, cellSize)
+        ctx.strokeRect(cx, cy, outerW, outerH)
         ctx.strokeStyle = "rgba(30,100,255,0.7)"; ctx.lineWidth = 1 / scaleF
-        ctx.strokeRect(cx + inset, cy + inset, cellSize - inset * 2, cellSize - inset * 2)
-        ctx.fillStyle = "rgba(0,0,0,0.75)"; ctx.font = `bold ${Math.round(cellSize * 0.16)}px sans-serif`
-        ctx.fillText(cursor + i + 1, cx + 4, cy + cellSize * 0.21)
+        ctx.strokeRect(cx + innerInset, cy + innerInset, innerSide - innerInset * 2, innerSide - innerInset * 2)
+        ctx.fillStyle = "rgba(0,0,0,0.75)"
+        ctx.font = `bold ${Math.round(innerSide * 0.16)}px sans-serif`
+        ctx.fillText(targetChar, cx + 4, cy + innerSide * 0.21)
       }
       ctx.restore()
 
       const label = document.createElement("p")
-      label.textContent = `หน้า ${page.pageNumber}  (ช่อง ${cursor + 1}–${cursor + pageMaxCells})`
+      label.textContent = `หน้า ${page.pageNumber}  (ช่อง ${pageStartIndex + 1}–${pageStartIndex + pageMaxCells})`
       label.style.cssText = "font-size:10px;color:#888;text-align:center;margin:0 0 4px;font-family:sans-serif"
 
       const wrapper = document.createElement("div")
@@ -856,7 +1121,7 @@ function GridDebugOverlay({ pageRef, pageVersion, chars, calibration }) {
       wrapper.appendChild(canvas)
       container.appendChild(wrapper)
 
-      cursor += pageMaxCells
+      cursor = Math.max(cursor, pageStartIndex + pageMaxCells)
     }
   }, [pageRef, pageVersion, chars, calibration])
 
@@ -879,11 +1144,11 @@ export default function Step3({ selected, pdfFile, templateChars = [], onGlyphsU
     () => (templateChars.length > 0 ? templateChars : [...selected]),
     [selected, templateChars]
   )
-  const [pdfTargets, setPdfTargets] = useState([])
-  const chars = useMemo(
-    () => (pdfTargets.length > 0 ? pdfTargets : fallbackChars),
-    [pdfTargets, fallbackChars]
-  )
+  const [charsFromPdfQr, setCharsFromPdfQr] = useState(null)
+  const chars = useMemo(() => {
+    if (charsFromPdfQr?.length) return charsFromPdfQr
+    return fallbackChars
+  }, [charsFromPdfQr, fallbackChars])
 
   const pageRef = useRef(null)
   const [pageVersion, setPageVersion] = useState(0)
@@ -927,7 +1192,7 @@ export default function Step3({ selected, pdfFile, templateChars = [], onGlyphsU
 
     if (!pdfFile) {
       pageRef.current = null
-      setPdfTargets([])
+      setCharsFromPdfQr(null)
       return () => {
         canceled = true
       }
@@ -942,7 +1207,7 @@ export default function Step3({ selected, pdfFile, templateChars = [], onGlyphsU
       setRemovedIds(new Set())
       setCalibration(DEFAULT_CALIBRATION)
       setAutoInfo("")
-      setPdfTargets([])
+      setCharsFromPdfQr(null)
 
       ;(async () => {
         let loadingTask = null
@@ -979,15 +1244,16 @@ export default function Step3({ selected, pdfFile, templateChars = [], onGlyphsU
 
             await page.render({ canvasContext: ctx, viewport }).promise
             const anchorInfo = await collectTextAnchors(page, viewport, 9999)
-            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
             const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height)
             // Decode QR code embedded in template for precise page/cell metadata
             const qrMeta = decodeQRFromImageData(imgData.data, canvas.width, canvas.height)
+            const regDots = detectRegDots(imgData.data, canvas.width, canvas.height)
             pages.push({
               ctx,
               pageWidth: canvas.width,
               pageHeight: canvas.height,
               imageData: imgData.data,
+              regDots,
               pageNumber,
               anchors: anchorInfo.anchors,
               anchorByIndex: anchorInfo.byIndex,
@@ -995,21 +1261,23 @@ export default function Step3({ selected, pdfFile, templateChars = [], onGlyphsU
               contiguousCount: anchorInfo.contiguousCount,
               hasCodeAnchors: anchorInfo.hasCodeAnchors,
               codeAnchorCount: anchorInfo.codeAnchorCount || 0,
-              // QR meta takes priority over HGMETA text tag
-              pageMeta: qrMeta || anchorInfo.pageMeta || null,
+              // QR + HGMETA: QR wins for ranges; charset only comes from QR when ,j= is present.
+              pageMeta: qrMeta
+                ? { ...anchorInfo.pageMeta, ...qrMeta }
+                : anchorInfo.pageMeta || null,
             })
           }
 
           if (canceled) return
 
-          const derivedTargets = buildTargetsFromPages(pages)
-          const effectiveChars = derivedTargets.length > 0 ? derivedTargets : fallbackChars
-          const profiledPages = buildAutoPageProfiles(pages, effectiveChars)
+          const qrCharset = extractCharsetIfCompleteInQr(pages)
+          setCharsFromPdfQr(qrCharset)
+          const profileChars = qrCharset?.length ? qrCharset : fallbackChars
+          const profiledPages = buildAutoPageProfiles(pages, profileChars)
           pageRef.current = {
             pages: profiledPages,
             totalPages: profiledPages.length,
           }
-          setPdfTargets(derivedTargets)
 
           const avgScore =
             profiledPages.length > 0
@@ -1022,8 +1290,8 @@ export default function Step3({ selected, pdfFile, templateChars = [], onGlyphsU
           const codeAnchorPages = profiledPages.filter(p => p.hasCodeAnchors).length
           setAutoInfo(
             Number.isFinite(avgScore)
-              ? `Auto aligned ${profiledPages.length} pages (PDF targets ${effectiveChars.length}, anchored ${anchorPages}, code ${codeAnchorPages}, avg score ${avgScore.toFixed(1)})`
-              : `Auto aligned ${profiledPages.length} pages (PDF targets ${effectiveChars.length}, anchored ${anchorPages}, code ${codeAnchorPages})`
+              ? `Auto aligned ${profiledPages.length} pages (targets ${fallbackChars.length}, anchored ${anchorPages}, code ${codeAnchorPages}, avg score ${avgScore.toFixed(1)})`
+              : `Auto aligned ${profiledPages.length} pages (targets ${fallbackChars.length}, anchored ${anchorPages}, code ${codeAnchorPages})`
           )
           setPageVersion(v => v + 1)
         } catch (err) {
@@ -1072,16 +1340,13 @@ export default function Step3({ selected, pdfFile, templateChars = [], onGlyphsU
     for (const page of source.pages) {
       if (cursor >= chars.length) break
 
-      // TEMPLATE_CALIBRATION is measured from page 1; apply it uniformly to all pages.
-      const pageCalibration = {
-        offsetX: TEMPLATE_CALIBRATION.offsetX + calibration.offsetX,
-        offsetY: TEMPLATE_CALIBRATION.offsetY + calibration.offsetY,
-        cellAdjust: TEMPLATE_CALIBRATION.cellAdjust + calibration.cellAdjust,
-        gapAdjust: TEMPLATE_CALIBRATION.gapAdjust + calibration.gapAdjust,
-      }
+      // Prefer per-page auto calibration when available, then apply manual slider offsets.
+      const baseCalibration = TEMPLATE_CALIBRATION
+      const pageCalibration = mergeCalibration(baseCalibration, calibration)
 
-      // Keep slot mapping deterministic across pages (1..N) to avoid noisy header/footer anchors shifting indices.
-      const startIndex = cursor
+      // Prefer explicit per-page range from QR/HGMETA to avoid index drift.
+      const startIndex =
+        page.pageMeta?.cellFrom > 0 ? page.pageMeta.cellFrom - 1 : cursor
 
       // HGMETA tag gives us the exact cell count written into this page — use it directly.
       let pageMaxCells
@@ -1107,13 +1372,22 @@ export default function Step3({ selected, pdfFile, templateChars = [], onGlyphsU
       }
       if (pageMaxCells <= 0) continue
 
+      // Build cell rects from registration dots if available
+      const pageCellFrom = page.pageMeta?.cellFrom > 0 ? page.pageMeta.cellFrom : startIndex + 1
+      const pageCellRects =
+        page.regDots?.length >= 4
+          ? buildOrderedCellRectsForPage(page, pageCellFrom, pageMaxCells)
+          : null
+      if (pageCellRects) {
+        pageCellRects = pageCellRects.map(r => ({
+          ...r,
+          x: r.x + calibration.offsetX,
+          y: r.y + calibration.offsetY,
+        }))
+      }
+
       const pageChars = chars.slice(startIndex, startIndex + pageMaxCells)
       if (pageChars.length === 0) continue
-
-      // Build cell rects from registration dots if available
-      const pageCellRects = page.regDots?.length >= 4
-        ? buildCellRectsFromDots(page.regDots, page.pageWidth, page.pageHeight, GRID_COLS, pageMaxCells)
-        : null
 
       const pageGlyphs = extractGlyphsFromCanvas({
         ctx: page.ctx,
@@ -1265,8 +1539,14 @@ export default function Step3({ selected, pdfFile, templateChars = [], onGlyphsU
         ))}
       </div>
 
+      {charsFromPdfQr?.length > 0 && (
+        <InfoBox color="sage">
+          อ่านลำดับตัวอักษรจาก QR บนเทมเพลตแล้ว (ตรงกับ PDF ตอนสร้าง) — เทมเพลตเก่าที่ยังไม่มีข้อมูลนี้ใน QR
+          ระบบยังใช้ตัวที่เลือกใน Step 1 ตามเดิม
+        </InfoBox>
+      )}
       <InfoBox color="amber">
-        ถ้าลำดับ 0-9 ไม่ตรง ให้ปรับ Grid Alignment ด้านล่างก่อน จากนั้นคลิกภาพเพื่อดูแบบขยาย
+        ถ้ากริดกับตัวเขียวไม่ตรง ให้ปรับ Grid Alignment ด้านล่างก่อน จากนั้นคลิกภาพเพื่อดูแบบขยาย
       </InfoBox>
       {isPartialRead && (
         <InfoBox color="amber">
@@ -1495,7 +1775,7 @@ export default function Step3({ selected, pdfFile, templateChars = [], onGlyphsU
             </div>
             <div style={{ lineHeight: 1.8 }}>
               <div>
-                ช่องที่ {activeGlyph.index} • เป้าหมาย: <b style={{ color: C.ink }}>{activeGlyph.ch}</b>
+                เป้าหมาย: <b style={{ color: C.ink }}>{activeGlyph.ch}</b> • ลำดับช่อง {activeGlyph.index}
               </div>
               <div>
                 รหัสช่อง: <b style={{ color: C.ink }}>HG{String(activeGlyph.index).padStart(3, "0")}</b>
@@ -1539,7 +1819,7 @@ export default function Step3({ selected, pdfFile, templateChars = [], onGlyphsU
           >
             <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
               <p style={{ fontSize: 14, fontWeight: 600, color: C.ink }}>
-                ช่องที่ {zoomGlyph.index} • {zoomGlyph.ch}
+                ตัวอักษรเป้าหมาย: {zoomGlyph.ch} • ลำดับช่อง {zoomGlyph.index}
               </p>
               <button
                 type="button"
