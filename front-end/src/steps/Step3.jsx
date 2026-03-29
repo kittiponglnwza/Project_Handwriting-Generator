@@ -124,106 +124,128 @@ function median(values) {
   return (sorted[mid - 1] + sorted[mid]) / 2
 }
 
-// Detect blue registration dots (from template corner markers) in imageData.
-// Returns array of {x, y} center positions.
-// ⚠️ Pre-filters red-dominant pixels (handwriting ink) ก่อน detect เพื่อกัน false positive
+// ─── Registration dot detection ──────────────────────────────────────────────
+// Template CSS: .reg-tl/tr/bl/br { width:4px; height:4px; background:#3A7BD5; border-radius:50% }
+// At PDF scale=3: dot renders ~12px diameter
+// Color #3A7BD5 = RGB(58, 123, 213) → b dominant, mid luminance ~116
+// Guide lines are #A8C1DD = RGB(168, 193, 221) → lighter, lower b-r spread
+
 function detectRegDots(imageData, pageWidth, pageHeight) {
   const data = imageData
   const dots = []
   const visited = new Uint8Array(pageWidth * pageHeight)
-  const STEP = 2
 
-  for (let y = 0; y < pageHeight; y += STEP) {
-    for (let x = 0; x < pageWidth; x += STEP) {
-      const idx = (y * pageWidth + x) * 4
-      const r = data[idx], g = data[idx + 1], b = data[idx + 2], a = data[idx + 3]
-      if (a < 100) continue
-      // ❌ ข้ามลายมือ: red-dominant pixel (ปากกาแดง GoodNotes)
-      if (r > 160 && r - b > 60 && r - g > 40) continue
-      // Blue registration dot: b dominant, moderate saturation
-      if (b < 140 || b - r < 40 || b - g < 30) continue
+  for (let y = 0; y < pageHeight; y++) {
+    for (let x = 0; x < pageWidth; x++) {
       if (visited[y * pageWidth + x]) continue
+      const idx = (y * pageWidth + x) * 4
+      const r = data[idx], g = data[idx+1], b = data[idx+2], a = data[idx+3]
+      if (a < 80) continue
+      // Must be blue-dominant (#3A7BD5: b=213, r=58, g=123)
+      // b-r >= 100, b-g >= 50, b >= 150
+      if (b < 150 || b - r < 80 || b - g < 40) continue
+      // Skip guide lines (#A8C1DD: b=221, r=168, g=193 → b-r=53, b-g=28) — too low spread
+      // Our threshold b-r>=80 already excludes them
+      // Skip red ink
+      if (r > 150 && r - b > 50) continue
 
-      // Flood-fill to find dot extent
+      // Flood-fill the blob
       let minX = x, maxX = x, minY = y, maxY = y, count = 0
-      const stack = [[x, y]]
+      const stack = [y * pageWidth + x]
       while (stack.length > 0) {
-        const [cx, cy] = stack.pop()
-        if (cx < 0 || cx >= pageWidth || cy < 0 || cy >= pageHeight) continue
-        if (visited[cy * pageWidth + cx]) continue
-        const i2 = (cy * pageWidth + cx) * 4
+        const pos = stack.pop()
+        if (visited[pos]) continue
+        const px = pos % pageWidth
+        const py = Math.floor(pos / pageWidth)
+        if (px < 0 || px >= pageWidth || py < 0 || py >= pageHeight) continue
+        const i2 = pos * 4
         const r2 = data[i2], g2 = data[i2+1], b2 = data[i2+2], a2 = data[i2+3]
-        // ❌ ข้ามลายมือใน flood-fill ด้วย
-        if (r2 > 160 && r2 - b2 > 60 && r2 - g2 > 40) continue
-        if (a2 < 80 || b2 < 120 || b2 - r2 < 30 || b2 - g2 < 20) continue
-        visited[cy * pageWidth + cx] = 1
+        if (a2 < 60) continue
+        // Flood: same blue family — allow some variation for antialiasing
+        if (b2 < 120 || b2 - r2 < 40 || b2 - g2 < 15) continue
+        if (r2 > 150 && r2 - b2 > 30) continue
+        visited[pos] = 1
         count++
-        if (cx < minX) minX = cx; if (cx > maxX) maxX = cx
-        if (cy < minY) minY = cy; if (cy > maxY) maxY = cy
-        stack.push([cx+1,cy],[cx-1,cy],[cx,cy+1],[cx,cy-1])
+        if (px < minX) minX = px; if (px > maxX) maxX = px
+        if (py < minY) minY = py; if (py > maxY) maxY = py
+        if (px + 1 < pageWidth)  stack.push(pos + 1)
+        if (px - 1 >= 0)          stack.push(pos - 1)
+        if (py + 1 < pageHeight)  stack.push(pos + pageWidth)
+        if (py - 1 >= 0)          stack.push(pos - pageWidth)
       }
 
       const w = maxX - minX + 1
       const h = maxY - minY + 1
-      // Registration dots are ~4px rendered at scale=3 → ~12px, allow range 6–30px
-      if (count < 20 || w < 5 || h < 5 || w > 40 || h > 40) continue
+      // 4px CSS dot at scale=3 → ~12px; allow 6–28px for antialiasing/scan variation
+      if (w < 5 || h < 5 || w > 30 || h > 30) continue
+      // Must be roughly circular (not a line segment)
+      if (Math.max(w, h) / Math.min(w, h) > 2.2) continue
+
       dots.push({ x: (minX + maxX) / 2, y: (minY + maxY) / 2, w, h })
     }
   }
+
+  console.log(`[detectRegDots] ${pageWidth}×${pageHeight}: ${dots.length} dots`)
   return dots
 }
 
-// From detected registration dots, compute per-cell positions.
-// Each cell has 4 corner dots: TL, TR, BL, BR.
-// Groups nearby dots into cell quads using grid structure.
+// detectCellGridLines — not used (template has explicit reg dots)
+function detectCellGridLines(_imageData, _pageWidth, _pageHeight) {
+  return { vLines: [], hLines: [] }
+}
+
+// Build cell rects from registration dots.
+// Each cell has 4 corner dots (TL, TR, BL, BR) at offset (2px, 2px) from cell corners.
+// Strategy: cluster dot x-coords → col boundaries, cluster y-coords → row boundaries.
 function buildCellRectsFromDots(dots, pageWidth, pageHeight, expectedCols, expectedCount) {
   if (dots.length < 4) return null
 
-  // Sort by Y then X to find grid structure
-  const sorted = [...dots].sort((a, b) => a.y - b.y || a.x - b.x)
+  function clusterCoords(vals, pageSize) {
+    const sorted = [...vals].sort((a, b) => a - b)
+    // min gap between distinct grid lines = 4% of page
+    const minGap = pageSize * 0.04
+    const clusters = []
+    let group = [sorted[0]]
+    for (let i = 1; i < sorted.length; i++) {
+      if (sorted[i] - sorted[i-1] < minGap) {
+        group.push(sorted[i])
+      } else {
+        clusters.push(group.reduce((s,v) => s+v, 0) / group.length)
+        group = [sorted[i]]
+      }
+    }
+    clusters.push(group.reduce((s,v) => s+v, 0) / group.length)
+    return clusters
+  }
 
-  // Estimate cell pitch from dot spacing
-  const xs = [...new Set(dots.map(d => Math.round(d.x / 8) * 8))].sort((a,b) => a-b)
-  const ys = [...new Set(dots.map(d => Math.round(d.y / 8) * 8))].sort((a,b) => a-b)
+  const xs = clusterCoords(dots.map(d => d.x), pageWidth)
+  const ys = clusterCoords(dots.map(d => d.y), pageHeight)
 
+  console.log(`[buildCellRectsFromDots] xs=${xs.length} ys=${ys.length} dots=${dots.length}`)
   if (xs.length < 2 || ys.length < 2) return null
 
-  // Each cell column boundary is defined by pairs of x positions (left-dot, right-dot)
-  // Group x positions into pairs by proximity
-  const colXs = [] // center x of each column's left edge dots
-  let i = 0
-  while (i < xs.length) {
-    let j = i + 1
-    while (j < xs.length && xs[j] - xs[i] < pageWidth * 0.12) j++
-    colXs.push(xs[i])
-    i = j
-  }
+  const minCellW = pageWidth * 0.05
+  const minCellH = pageHeight * 0.04
+  const maxCellW = pageWidth * 0.35
+  const maxCellH = pageHeight * 0.30
 
-  const rowYs = []
-  let ri = 0
-  while (ri < ys.length) {
-    let rj = ri + 1
-    while (rj < ys.length && ys[rj] - ys[ri] < pageHeight * 0.08) rj++
-    rowYs.push(ys[ri])
-    ri = rj
-  }
-
-  if (colXs.length < 2 || rowYs.length < 2) return null
-
-  // Build cell rects from grid intersections
   const cellRects = []
-  for (let row = 0; row + 1 < rowYs.length; row++) {
-    for (let col = 0; col + 1 < colXs.length; col++) {
-      const x1 = colXs[col]
-      const y1 = rowYs[row]
-      const x2 = colXs[col + 1]
-      const y2 = rowYs[row + 1]
-      cellRects.push({ x: x1, y: y1, w: x2 - x1, h: y2 - y1, row, col })
+  for (let row = 0; row + 1 < ys.length; row++) {
+    for (let col = 0; col + 1 < xs.length; col++) {
+      const x1 = xs[col], y1 = ys[row]
+      const x2 = xs[col+1], y2 = ys[row+1]
+      const w = x2 - x1, h = y2 - y1
+      if (w < minCellW || h < minCellH || w > maxCellW || h > maxCellH) continue
+      cellRects.push({ x: x1, y: y1, w, h, row, col })
     }
   }
 
+  console.log(`[buildCellRectsFromDots] cellRects=${cellRects.length} (expected ~${expectedCount})`)
   return cellRects.length > 0 ? cellRects : null
 }
+
+// buildCellRectsFromLines — not used
+function buildCellRectsFromLines() { return null }
 
 function sortCellRectsReadingOrder(rects) {
   if (!rects?.length) return []
@@ -381,7 +403,10 @@ function buildOrderedCellRectsForPage(page, pageCellFrom, pageMaxCells) {
     GRID_COLS,
     pageMaxCells
   )
-  if (!cellRectsRaw?.length) return null
+  if (!cellRectsRaw?.length) {
+    console.warn(`[buildOrderedCellRectsForPage] หน้า ${page.pageNumber}: dots=${page.regDots.length} แต่สร้าง cell rects ไม่ได้`)
+    return null
+  }
 
   let pool = cellRectsRaw
   if (cellRectsRaw.length > pageMaxCells + 2 && page.anchorByIndex?.size) {
@@ -828,7 +853,6 @@ function findInkBoundingBox(data, width, height) {
 }
 
 function extractGlyphsFromCanvas({ ctx, pageWidth, pageHeight, chars, calibration, cellRects }) {
-  // If we have cell rects from registration dots, use them directly — survives GoodNotes rescaling
   const useRegDots = cellRects && cellRects.length >= chars.length
 
   let gap, cellSize, startX, startY
@@ -840,7 +864,6 @@ function extractGlyphsFromCanvas({ ctx, pageWidth, pageHeight, chars, calibratio
   return chars.map((ch, i) => {
     const row = Math.floor(i / GRID_COLS)
     const col = i % GRID_COLS
-
     let cellX, cellY, cellW, cellH
     if (useRegDots && cellRects[i]) {
       const rect = cellRects[i]
@@ -1218,11 +1241,12 @@ function GridDebugOverlay({ pageRef, pageVersion, chars, calibration }) {
 
       const pageCellFrom = page.pageMeta?.cellFrom > 0 ? page.pageMeta.cellFrom : pageStartIndex + 1
 
+      const hasGridLines = (page.regDots?.length ?? 0) >= 4
+
       // ⚠️ ใช้ let เพราะต้อง reassign หลัง apply calibration offset
-      let pageCellRectsOrdered =
-        page.regDots?.length >= 4
-          ? buildOrderedCellRectsForPage(page, pageCellFrom, pageMaxCells)
-          : null
+      let pageCellRectsOrdered = hasGridLines
+        ? buildOrderedCellRectsForPage(page, pageCellFrom, pageMaxCells)
+        : null
       if (pageCellRectsOrdered) {
         pageCellRectsOrdered = pageCellRectsOrdered.map(r => ({
           ...r,
@@ -1231,11 +1255,6 @@ function GridDebugOverlay({ pageRef, pageVersion, chars, calibration }) {
         }))
       }
 
-      // fallback geometry เมื่อไม่มี reg dots
-      const gridGeom = pageCellRectsOrdered
-        ? null
-        : getGridGeometry(pageWidth, pageHeight, pageMaxCells, pageGeomCalib)
-
       const scaleF = DISPLAY_W / pageWidth
       const canvas = document.createElement("canvas")
       canvas.width = DISPLAY_W
@@ -1243,55 +1262,53 @@ function GridDebugOverlay({ pageRef, pageVersion, chars, calibration }) {
 
       const ctx = canvas.getContext("2d")
       ctx.save(); ctx.scale(scaleF, scaleF); ctx.drawImage(srcCtx.canvas, 0, 0); ctx.restore()
-      ctx.save(); ctx.scale(scaleF, scaleF)
 
-      for (let i = 0; i < pageMaxCells; i++) {
-        const targetChar = String(chars[pageStartIndex + i] || "")
-
-        let cx, cy, outerW, outerH, cropX, cropY, cropSize
-
-        if (pageCellRectsOrdered && pageCellRectsOrdered[i]) {
+      // ❌ ถ้า line detection ไม่สำเร็จ — วาด overlay แจ้ง user
+      if (!pageCellRectsOrdered) {
+        const dotsCount = page.regDots?.length ?? 0
+        ctx.save()
+        ctx.fillStyle = "rgba(220,40,40,0.12)"
+        ctx.fillRect(0, 0, canvas.width, canvas.height)
+        ctx.fillStyle = "rgba(200,30,30,0.9)"
+        ctx.font = `bold ${Math.round(canvas.height * 0.035)}px sans-serif`
+        ctx.textAlign = "center"
+        ctx.fillText(
+          `⚠️ reg dots ไม่พอ — detect ได้ ${dotsCount} จุด`,
+          canvas.width / 2,
+          canvas.height * 0.5
+        )
+        ctx.restore()
+      } else {
+        ctx.save(); ctx.scale(scaleF, scaleF)
+        for (let i = 0; i < pageMaxCells; i++) {
+          if (!pageCellRectsOrdered[i]) continue
           const rect = pageCellRectsOrdered[i]
-          cx = Math.round(rect.x)
-          cy = Math.round(rect.y)
-          outerW = Math.round(rect.w)
-          outerH = Math.round(rect.h)
-          // crop zone ใช้ logic เดียวกับ extractGlyphsFromCanvas
+          const cx = Math.round(rect.x)
+          const cy = Math.round(rect.y)
+          const outerW = Math.round(rect.w)
+          const outerH = Math.round(rect.h)
           const insetR = Math.round(Math.min(rect.w, rect.h) * GRID_CONFIG.insetRatio)
-          cropSize = Math.max(20, Math.round(Math.min(rect.w, rect.h) - insetR * 2))
-          cropX = clamp(cx + insetR, 0, Math.max(0, pageWidth - cropSize))
-          cropY = clamp(cy + insetR, 0, Math.max(0, pageHeight - cropSize))
-        } else if (gridGeom) {
-          const { gap, cellSize, startX, startY } = gridGeom
-          const row = Math.floor(i / GRID_COLS)
-          const col = i % GRID_COLS
-          cx = Math.round(startX + col * (cellSize + gap))
-          cy = Math.round(startY + row * (cellSize + gap))
-          outerW = Math.round(cellSize)
-          outerH = Math.round(cellSize)
-          const insetR = Math.round(cellSize * GRID_CONFIG.insetRatio)
-          cropSize = Math.max(20, Math.round(cellSize - insetR * 2))
-          cropX = clamp(cx + insetR, 0, Math.max(0, pageWidth - cropSize))
-          cropY = clamp(cy + insetR, 0, Math.max(0, pageHeight - cropSize))
-        } else {
-          continue
+          const cropSize = Math.max(20, Math.round(Math.min(rect.w, rect.h) - insetR * 2))
+          const cropX = clamp(cx + insetR, 0, Math.max(0, pageWidth - cropSize))
+          const cropY = clamp(cy + insetR, 0, Math.max(0, pageHeight - cropSize))
+          const targetChar = String(chars[pageStartIndex + i] || "")
+
+          // 🟩 outer cell
+          ctx.strokeStyle = "rgba(0,200,80,0.9)"; ctx.lineWidth = 1.5 / scaleF
+          ctx.strokeRect(cx, cy, outerW, outerH)
+
+          // 🟦 crop zone — ตรงกับ extractGlyphsFromCanvas จริงๆ
+          ctx.strokeStyle = "rgba(30,100,255,0.7)"; ctx.lineWidth = 1 / scaleF
+          ctx.strokeRect(cropX, cropY, cropSize, cropSize)
+
+          // label
+          const fontSize = Math.round(cropSize * 0.18)
+          ctx.fillStyle = "rgba(0,0,0,0.75)"
+          ctx.font = `bold ${fontSize}px sans-serif`
+          ctx.fillText(targetChar, cropX + 3, cropY + fontSize)
         }
-
-        // 🟩 outer cell
-        ctx.strokeStyle = "rgba(0,200,80,0.9)"; ctx.lineWidth = 1.5 / scaleF
-        ctx.strokeRect(cx, cy, outerW, outerH)
-
-        // 🟦 crop zone — ตรงกับ extractGlyphsFromCanvas จริงๆ
-        ctx.strokeStyle = "rgba(30,100,255,0.7)"; ctx.lineWidth = 1 / scaleF
-        ctx.strokeRect(cropX, cropY, cropSize, cropSize)
-
-        // label ตัวอักษรเป้าหมาย
-        const fontSize = Math.round(cropSize * 0.18)
-        ctx.fillStyle = "rgba(0,0,0,0.75)"
-        ctx.font = `bold ${fontSize}px sans-serif`
-        ctx.fillText(targetChar, cropX + 3, cropY + fontSize)
+        ctx.restore()
       }
-      ctx.restore()
 
       const label = document.createElement("p")
       label.textContent = `หน้า ${page.pageNumber}  (ช่อง ${pageStartIndex + 1}–${pageStartIndex + pageMaxCells})`
@@ -1439,6 +1456,7 @@ export default function Step3({ selected, pdfFile, templateChars = [], onGlyphsU
               pageHeight: canvas.height,
               imageData: imgData.data,
               regDots,
+              gridLines: { vLines: [], hLines: [] },
               pageNumber,
               anchors: anchorInfo.anchors,
               anchorByIndex: anchorInfo.byIndex,
@@ -1561,9 +1579,9 @@ export default function Step3({ selected, pdfFile, templateChars = [], onGlyphsU
 
       // Build cell rects from registration dots if available
       const pageCellFrom = page.pageMeta?.cellFrom > 0 ? page.pageMeta.cellFrom : startIndex + 1
+      const hasGridLines = (page.regDots?.length ?? 0) >= 4
       // ⚠️ ใช้ let เพราะต้อง reassign หลัง apply calibration offset
-      let pageCellRects =
-        page.regDots?.length >= 4
+      let pageCellRects = hasGridLines
           ? buildOrderedCellRectsForPage(page, pageCellFrom, pageMaxCells)
           : null
       if (pageCellRects) {
@@ -1577,14 +1595,16 @@ export default function Step3({ selected, pdfFile, templateChars = [], onGlyphsU
       const pageChars = chars.slice(startIndex, startIndex + pageMaxCells)
       if (pageChars.length === 0) continue
 
-      const pageGlyphs = extractGlyphsFromCanvas({
+      const rawPageGlyphs = extractGlyphsFromCanvas({
         ctx: page.ctx,
         pageWidth: page.pageWidth,
         pageHeight: page.pageHeight,
         chars: pageChars,
         calibration: pageCalibration,
         cellRects: pageCellRects,
-      }).map((g, i) => ({
+      })
+
+      const pageGlyphs = rawPageGlyphs.map((g, i) => ({
         ...g,
         id: `p${page.pageNumber}-${startIndex + i}-${g.ch}`,
         index: startIndex + i + 1,
@@ -1616,6 +1636,14 @@ export default function Step3({ selected, pdfFile, templateChars = [], onGlyphsU
 
   const glyphs = analysisResult.glyphs
   const isPartialRead = chars.length > analysisResult.pageCharsCount
+
+  const regDotsFailedPages = useMemo(() => {
+    const store = pageRef.current
+    if (!store?.pages) return []
+    return store.pages
+      .map(p => ({ pageNumber: p.pageNumber, dotsCount: p.regDots?.length ?? 0 }))
+      .filter(p => p.dotsCount < 4)
+  }, [pageVersion])
 
   // ─── SVG Tracing Effect ───
   // เมื่อ glyphs เปลี่ยน → trace SVG async แล้ว setTracedGlyphs
@@ -1753,6 +1781,15 @@ export default function Step3({ selected, pdfFile, templateChars = [], onGlyphsU
           ระบบยังใช้ตัวที่เลือกใน Step 1 ตามเดิม
         </InfoBox>
       )}
+
+      {regDotsFailedPages.length > 0 && (
+        <InfoBox color="amber">
+          ⚠️ reg dots ไม่พอในหน้า{" "}
+          {regDotsFailedPages.map(p => `${p.pageNumber} (${p.dotsCount} จุด)`).join(", ")} —
+          ตรวจสอบว่า PDF print จาก template ที่สร้างโดย app นี้
+        </InfoBox>
+      )}
+
       <InfoBox color="amber">
         ถ้ากริดกับตัวเขียวไม่ตรง ให้ปรับ Grid Alignment ด้านล่างก่อน จากนั้นคลิกภาพเพื่อดูแบบขยาย
       </InfoBox>
