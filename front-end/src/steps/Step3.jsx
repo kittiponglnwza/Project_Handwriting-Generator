@@ -37,6 +37,35 @@ function median(values) {
   return (sorted[mid - 1] + sorted[mid]) / 2
 }
 
+function buildTargetsFromPages(pages) {
+  const codeIndices = new Set()
+  const numericIndices = new Set()
+
+  for (const page of pages) {
+    for (const anchor of page.anchors || []) {
+      if (!Number.isFinite(anchor.index) || anchor.index < 1) continue
+      if (anchor.kind === "code") {
+        codeIndices.add(anchor.index)
+      } else {
+        numericIndices.add(anchor.index)
+      }
+    }
+  }
+
+  const source = codeIndices.size > 0 ? codeIndices : numericIndices
+  if (source.size === 0) return []
+
+  const sorted = [...source].sort((a, b) => a - b)
+  let contiguousCount = 0
+  while (source.has(contiguousCount + 1)) {
+    contiguousCount += 1
+  }
+
+  const rawCount = contiguousCount > 0 ? contiguousCount : sorted[sorted.length - 1]
+  const count = Math.max(1, Math.min(1024, rawCount))
+  return Array.from({ length: count }, (_, i) => String(i + 1))
+}
+
 function classifyGlyph(imageData, width, height) {
   const { data } = imageData
   let darkPixels = 0
@@ -72,6 +101,89 @@ function classifyGlyph(imageData, width, height) {
   }
 
   return { status: "ok", inkRatio, edgeRatio }
+}
+
+function buildInkOnlyImageData(imageData, width, height) {
+  const cleaned = new ImageData(new Uint8ClampedArray(imageData.data), width, height)
+  const { data } = cleaned
+  const rowGuideCount = new Array(height).fill(0)
+  const rowDarkCount = new Array(height).fill(0)
+
+  const isGuideTone = (r, g, b, a) => {
+    if (a < 16) return false
+    const lum = r * 0.2126 + g * 0.7152 + b * 0.0722
+    const blueDom = b - Math.max(r, g)
+    const rgDiff = Math.abs(r - g)
+    return lum > 120 && lum < 245 && blueDom > 8 && blueDom < 86 && rgDiff < 42
+  }
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const idx = (y * width + x) * 4
+      const r = data[idx]
+      const g = data[idx + 1]
+      const b = data[idx + 2]
+      const a = data[idx + 3]
+      if (isGuideTone(r, g, b, a)) rowGuideCount[y] += 1
+      const lum = r * 0.2126 + g * 0.7152 + b * 0.0722
+      if (a > 16 && lum < 115) rowDarkCount[y] += 1
+    }
+  }
+
+  const guideRows = new Array(height).fill(false)
+  for (let y = 0; y < height; y += 1) {
+    const guideRatio = rowGuideCount[y] / width
+    const darkRatio = rowDarkCount[y] / width
+    if (guideRatio > 0.26 && darkRatio < 0.2) {
+      guideRows[y] = true
+      if (y > 0) guideRows[y - 1] = true
+      if (y + 1 < height) guideRows[y + 1] = true
+    }
+  }
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const idx = (y * width + x) * 4
+      const r = data[idx]
+      const g = data[idx + 1]
+      const b = data[idx + 2]
+      const a = data[idx + 3]
+      if (guideRows[y] && isGuideTone(r, g, b, a)) {
+        data[idx] = 255
+        data[idx + 1] = 255
+        data[idx + 2] = 255
+        data[idx + 3] = 255
+      }
+    }
+  }
+
+  for (let y = 0; y < height; y += 1) {
+    const rowGuideRatio = rowGuideCount[y] / width
+    for (let x = 0; x < width; x += 1) {
+      const idx = (y * width + x) * 4
+      const r = data[idx]
+      const g = data[idx + 1]
+      const b = data[idx + 2]
+      const a = data[idx + 3]
+      const lum = r * 0.2126 + g * 0.7152 + b * 0.0722
+      const blueDom = b - Math.max(r, g)
+
+      const shouldDropGuide =
+        lum > 168 &&
+        blueDom > 6 &&
+        rowGuideRatio > 0.12 &&
+        rowDarkCount[y] / width < 0.28
+
+      if (a > 12 && shouldDropGuide) {
+        data[idx] = 255
+        data[idx + 1] = 255
+        data[idx + 2] = 255
+        data[idx + 3] = 255
+      }
+    }
+  }
+
+  return cleaned
 }
 
 function getGridGeometry(pageWidth, pageHeight, charsLength, calibration) {
@@ -212,6 +324,12 @@ function extractGlyphsFromCanvas({ ctx, pageWidth, pageHeight, chars, calibratio
     cropCanvas.height = size
     const cropCtx = cropCanvas.getContext("2d")
     cropCtx?.putImageData(imageData, 0, 0)
+    const inkOnlyData = buildInkOnlyImageData(imageData, size, size)
+    const inkCanvas = document.createElement("canvas")
+    inkCanvas.width = size
+    inkCanvas.height = size
+    const inkCtx = inkCanvas.getContext("2d")
+    inkCtx?.putImageData(inkOnlyData, 0, 0)
 
     const { status, inkRatio, edgeRatio } = classifyGlyph(imageData, size, size)
 
@@ -223,6 +341,7 @@ function extractGlyphsFromCanvas({ ctx, pageWidth, pageHeight, chars, calibratio
       inkRatio,
       edgeRatio,
       preview: cropCanvas.toDataURL("image/png"),
+      previewInk: inkCanvas.toDataURL("image/png"),
     }
   })
 }
@@ -480,9 +599,14 @@ function Adjuster({ label, value, min, max, step, onChange }) {
 }
 
 export default function Step3({ selected, pdfFile, templateChars = [], onGlyphsUpdate = () => {} }) {
-  const chars = useMemo(
+  const fallbackChars = useMemo(
     () => (templateChars.length > 0 ? templateChars : [...selected]),
     [selected, templateChars]
+  )
+  const [pdfTargets, setPdfTargets] = useState([])
+  const chars = useMemo(
+    () => (pdfTargets.length > 0 ? pdfTargets : fallbackChars),
+    [pdfTargets, fallbackChars]
   )
 
   const pageRef = useRef(null)
@@ -526,6 +650,7 @@ export default function Step3({ selected, pdfFile, templateChars = [], onGlyphsU
 
     if (!pdfFile) {
       pageRef.current = null
+      setPdfTargets([])
       return () => {
         canceled = true
       }
@@ -540,6 +665,7 @@ export default function Step3({ selected, pdfFile, templateChars = [], onGlyphsU
       setRemovedIds(new Set())
       setCalibration(DEFAULT_CALIBRATION)
       setAutoInfo("")
+      setPdfTargets([])
 
       ;(async () => {
         let loadingTask = null
@@ -565,7 +691,7 @@ export default function Step3({ selected, pdfFile, templateChars = [], onGlyphsU
             ctx.fillRect(0, 0, canvas.width, canvas.height)
 
             await page.render({ canvasContext: ctx, viewport }).promise
-            const anchorInfo = await collectTextAnchors(page, viewport, Math.max(chars.length, 1))
+            const anchorInfo = await collectTextAnchors(page, viewport, 9999)
             const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height).data
             pages.push({
               ctx,
@@ -583,11 +709,14 @@ export default function Step3({ selected, pdfFile, templateChars = [], onGlyphsU
 
           if (canceled) return
 
-          const profiledPages = buildAutoPageProfiles(pages, chars)
+          const derivedTargets = buildTargetsFromPages(pages)
+          const effectiveChars = derivedTargets.length > 0 ? derivedTargets : fallbackChars
+          const profiledPages = buildAutoPageProfiles(pages, effectiveChars)
           pageRef.current = {
             pages: profiledPages,
             totalPages: profiledPages.length,
           }
+          setPdfTargets(derivedTargets)
 
           const avgScore =
             profiledPages.length > 0
@@ -600,8 +729,8 @@ export default function Step3({ selected, pdfFile, templateChars = [], onGlyphsU
           const codeAnchorPages = profiledPages.filter(p => p.hasCodeAnchors).length
           setAutoInfo(
             Number.isFinite(avgScore)
-              ? `Auto aligned ${profiledPages.length} pages (anchored ${anchorPages}, code ${codeAnchorPages}, avg score ${avgScore.toFixed(1)})`
-              : `Auto aligned ${profiledPages.length} pages (anchored ${anchorPages}, code ${codeAnchorPages})`
+              ? `Auto aligned ${profiledPages.length} pages (PDF targets ${effectiveChars.length}, anchored ${anchorPages}, code ${codeAnchorPages}, avg score ${avgScore.toFixed(1)})`
+              : `Auto aligned ${profiledPages.length} pages (PDF targets ${effectiveChars.length}, anchored ${anchorPages}, code ${codeAnchorPages})`
           )
           setPageVersion(v => v + 1)
         } catch (err) {
@@ -622,7 +751,7 @@ export default function Step3({ selected, pdfFile, templateChars = [], onGlyphsU
     return () => {
       canceled = true
     }
-  }, [pdfFile, chars])
+  }, [pdfFile, fallbackChars])
 
   const analysisResult = useMemo(() => {
     const sourceVersion = pageVersion
@@ -763,7 +892,9 @@ export default function Step3({ selected, pdfFile, templateChars = [], onGlyphsU
   if (chars.length === 0) {
     return (
       <div className="fade-up">
-        <InfoBox color="amber">ยังไม่ได้เลือกตัวอักษรใน Step 1 กรุณากลับไปเลือกก่อน แล้วค่อยอัปโหลด/วิเคราะห์</InfoBox>
+        <InfoBox color="amber">
+          ไม่พบ target ช่องจากไฟล์ PDF นี้ (HG/เลขช่อง) คุณสามารถใช้ไฟล์ template ที่มีรหัสช่อง หรือเลือกตัวอักษรใน Step 1 เป็นโหมดสำรองได้
+        </InfoBox>
       </div>
     )
   }

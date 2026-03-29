@@ -70,7 +70,9 @@ export default function Step4({ selected, templateChars = [], extractedGlyphs = 
     return sourceChars[0] || "ก"
   }, [hasFileSource, activeFileGlyph, pickedChar, sourceChars])
 
-  const basePreview = hasFileSource ? activeFileGlyph?.preview || "" : ""
+  const basePreview = hasFileSource
+    ? activeFileGlyph?.previewInk || activeFileGlyph?.preview || ""
+    : ""
 
   const variants = useMemo(() => {
     return [1, 2, 3].map(v => buildVariant(baseChar || "ก", seed, v))
@@ -214,15 +216,17 @@ export default function Step4({ selected, templateChars = [], extractedGlyphs = 
                   overflow: "hidden",
                 }}
               >
-                <div
-                  style={{
-                    position: "absolute",
-                    left: "7%",
-                    right: "7%",
-                    top: "58%",
-                    borderTop: `1px dashed ${C.borderMd}`,
-                  }}
-                />
+                {!hasFileSource && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      left: "7%",
+                      right: "7%",
+                      top: "58%",
+                      borderTop: `1px dashed ${C.borderMd}`,
+                    }}
+                  />
+                )}
 
                 {basePreview ? (
                   <img

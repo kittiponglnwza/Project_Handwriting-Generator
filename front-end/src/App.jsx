@@ -224,7 +224,11 @@ export default function App() {
 
   const handleNext = () => {
     if (step === 1) {
-      generateTemplatePdf()
+      if (selected.size > 0) {
+        generateTemplatePdf()
+      } else {
+        setTemplateChars([])
+      }
       setStep(2)
       return
     }
@@ -232,15 +236,15 @@ export default function App() {
   }
 
   const selectedCount = templateChars.length > 0 ? templateChars.length : selected.size
-  const hasChars = selectedCount > 0
-  const canNext = step === 1 ? hasChars : step === 2 ? uploaded && hasChars : true
+  const visibleGlyphCount = analyzedGlyphs.length > 0 ? analyzedGlyphs.length : selectedCount
+  const canNext = step === 1 ? true : step === 2 ? uploaded : true
 
   const canOpenStep = targetStep => {
     if (targetStep === 1) return true
-    if (targetStep === 2) return hasChars
-    if (targetStep === 3) return hasChars && uploaded
-    if (targetStep === 4) return hasChars && uploaded
-    if (targetStep === 5) return hasChars && uploaded
+    if (targetStep === 2) return true
+    if (targetStep === 3) return uploaded
+    if (targetStep === 4) return uploaded
+    if (targetStep === 5) return uploaded
     return false
   }
   const content = {
@@ -267,7 +271,7 @@ export default function App() {
     5: <Step5 />,
   }
   const nextLabel = {
-    1: "Generate Template →",
+    1: selected.size > 0 ? "Generate Template →" : "ถัดไป →",
     2: "ถัดไป →",
     3: "สร้าง DNA →",
     4: "Preview →",
@@ -389,7 +393,7 @@ export default function App() {
               <div>
                 <p style={{ fontSize: 11, fontWeight: 500, color: C.ink }}>ลายมือ #1</p>
                 <p style={{ fontSize: 10, color: C.inkLt, marginTop: 1 }}>
-                  {selectedCount} glyphs • 50 MB max
+                  {visibleGlyphCount} glyphs • 50 MB max
                 </p>
               </div>
             </div>

@@ -56,7 +56,7 @@ export default function Step1({
   return (
     <div className="fade-up">
       <InfoBox color="amber">
-        เลือกเฉพาะตัวอักษรที่ต้องการ โดย Template จะสร้างตามตัวที่เลือกเท่านั้น
+        Step นี้เป็นตัวเลือกเสริมสำหรับสร้าง Template ใหม่เท่านั้น ถ้าใช้ไฟล์จากภายนอก สามารถไป Step 2 ได้เลย
       </InfoBox>
       <div
         style={{

@@ -1,10 +1,16 @@
-﻿import { useRef, useState } from "react"
+﻿import { useEffect, useRef, useState } from "react"
+import { GlobalWorkerOptions, getDocument } from "pdfjs-dist"
+import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url"
 import InfoBox from "../components/InfoBox"
 import Tag from "../components/Tag"
 import Btn from "../components/Btn"
 import C from "../styles/colors"
 
+GlobalWorkerOptions.workerSrc = pdfWorker
+
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024
+const TEMPLATE_CODE_RE = /^HG(\d{1,4})$/i
+const TEMPLATE_INDEX_RE = /^(\d{1,4})$/
 
 function formatFileSize(bytes) {
   if (!bytes && bytes !== 0) return "-"
@@ -32,6 +38,80 @@ function validatePdf(file) {
   }
 
   return ""
+}
+
+function deriveCountFromSet(indices) {
+  if (indices.size === 0) return 0
+
+  let contiguous = 0
+  while (indices.has(contiguous + 1)) contiguous += 1
+  if (contiguous > 0) return contiguous
+
+  return indices.size
+}
+
+async function readPdfTargetInfo(file) {
+  let loadingTask = null
+  let pdf = null
+
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer())
+    loadingTask = getDocument({ data: bytes })
+    pdf = await loadingTask.promise
+
+    const codeIndices = new Set()
+    const numericIndices = new Set()
+
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+      const page = await pdf.getPage(pageNumber)
+      const content = await page.getTextContent()
+
+      for (const item of content.items || []) {
+        const raw = String(item?.str || "").trim()
+        if (!raw) continue
+
+        const codeMatch = raw.match(TEMPLATE_CODE_RE)
+        if (codeMatch) {
+          const value = Number(codeMatch[1])
+          if (Number.isFinite(value) && value >= 1 && value <= 9999) {
+            codeIndices.add(value)
+          }
+          continue
+        }
+
+        const indexMatch = raw.match(TEMPLATE_INDEX_RE)
+        if (indexMatch) {
+          const value = Number(indexMatch[1])
+          if (Number.isFinite(value) && value >= 1 && value <= 9999) {
+            numericIndices.add(value)
+          }
+        }
+      }
+    }
+
+    const sourceSet = codeIndices.size > 0 ? codeIndices : numericIndices
+    const source = codeIndices.size > 0 ? "code" : numericIndices.size > 0 ? "index" : "none"
+    const count = deriveCountFromSet(sourceSet)
+    const sorted = [...sourceSet].sort((a, b) => a - b)
+    const sample = sorted.slice(0, 8)
+
+    return {
+      source,
+      count,
+      pages: pdf.numPages,
+      sample,
+      sampleLabel:
+        source === "code"
+          ? sample.map(v => `HG${String(v).padStart(3, "0")}`).join(", ")
+          : sample.join(", "),
+    }
+  } finally {
+    if (pdf) {
+      pdf.cleanup()
+      await pdf.destroy()
+    }
+    loadingTask?.destroy()
+  }
 }
 
 function Row({ label, val }) {
@@ -70,7 +150,45 @@ export default function Step2({ uploaded, pdfFile, onUpload, onClear }) {
   const [loading, setLoading] = useState(false)
   const [drag, setDrag] = useState(false)
   const [error, setError] = useState("")
+  const [targetInfo, setTargetInfo] = useState(null)
+  const [scanningPdf, setScanningPdf] = useState(false)
   const fileInputRef = useRef(null)
+
+  useEffect(() => {
+    let canceled = false
+
+    if (!pdfFile) {
+      setTargetInfo(null)
+      setScanningPdf(false)
+      return () => {
+        canceled = true
+      }
+    }
+
+    ;(async () => {
+      setScanningPdf(true)
+      try {
+        const info = await readPdfTargetInfo(pdfFile)
+        if (!canceled) setTargetInfo(info)
+      } catch {
+        if (!canceled) {
+          setTargetInfo({
+            source: "error",
+            count: 0,
+            pages: 0,
+            sample: [],
+            sampleLabel: "",
+          })
+        }
+      } finally {
+        if (!canceled) setScanningPdf(false)
+      }
+    })()
+
+    return () => {
+      canceled = true
+    }
+  }, [pdfFile])
 
   const openFilePicker = () => {
     fileInputRef.current?.click()
@@ -196,6 +314,23 @@ export default function Step2({ uploaded, pdfFile, onUpload, onClear }) {
       />
 
       {error && <InfoBox color="amber">{error}</InfoBox>}
+      {scanningPdf && <InfoBox>กำลังอ่านโครงช่องจากไฟล์ PDF...</InfoBox>}
+      {!scanningPdf && targetInfo?.source === "none" && (
+        <InfoBox color="amber">
+          ยังไม่พบรหัสช่องในไฟล์ (HGxxx/เลขช่อง) แต่ยังไป Step 3 เพื่อลองจัดกริดได้
+        </InfoBox>
+      )}
+      {!scanningPdf && targetInfo?.source && targetInfo.source !== "none" && targetInfo.source !== "error" && (
+        <InfoBox>
+          อ่านจากไฟล์ได้ประมาณ {targetInfo.count} ช่อง • แหล่งข้อมูล: {targetInfo.source === "code" ? "HG code" : "เลขช่อง"} • {targetInfo.pages} หน้า
+          {targetInfo.sampleLabel ? ` • ตัวอย่าง: ${targetInfo.sampleLabel}` : ""}
+        </InfoBox>
+      )}
+      {!scanningPdf && targetInfo?.source === "error" && (
+        <InfoBox color="amber">
+          อ่านโครงตัวอักษรจาก PDF ไม่สำเร็จ แต่ยังอัปโหลดไฟล์ไว้ใช้งานต่อได้
+        </InfoBox>
+      )}
 
       <div
         style={{
@@ -274,6 +409,30 @@ export default function Step2({ uploaded, pdfFile, onUpload, onClear }) {
         <Row label="File type" val="PDF" />
         <Row label="MIME" val={pdfFile.type || "application/pdf"} />
         <Row label="File size" val={formatFileSize(pdfFile.size)} />
+        <Row
+          label="Detected slots"
+          val={
+            scanningPdf
+              ? "กำลังอ่าน..."
+              : targetInfo?.source === "error"
+                ? "อ่านไม่สำเร็จ"
+                : String(targetInfo?.count ?? 0)
+          }
+        />
+        <Row
+          label="Detected source"
+          val={
+            scanningPdf
+              ? "กำลังอ่าน..."
+              : targetInfo?.source === "code"
+                ? "HG code"
+                : targetInfo?.source === "index"
+                  ? "Index number"
+                  : targetInfo?.source === "error"
+                    ? "Error"
+                    : "None"
+          }
+        />
         <div style={{ display: "flex", alignItems: "center", padding: "11px 0" }}>
           <span style={{ flex: 1, fontSize: 12, color: C.inkMd }}>Last modified</span>
           <span style={{ fontSize: 12, fontWeight: 500, color: C.ink, marginRight: 12 }}>
