@@ -94,7 +94,47 @@ export default function App() {
 
   const toCellCode = index => `HG${String(index + 1).padStart(3, "0")}`
 
-  const generateTemplatePdf = () => {
+  // Self-contained QR encoder — no CDN needed
+  // Uses qrcode-generator loaded dynamically once, cached on window
+  const ensureQrLib = () => {
+    if (window._qrLoaded) return Promise.resolve()
+    return new Promise((res, rej) => {
+      const s = document.createElement('script')
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js'
+      s.onload = () => { window._qrLoaded = true; res() }
+      s.onerror = rej
+      document.head.appendChild(s)
+    })
+  }
+
+  const makeQrDataUrl = async (text) => {
+    try {
+      await ensureQrLib()
+      const qr = window.qrcode(0, 'M')
+      qr.addData(text)
+      qr.make()
+      const size = qr.getModuleCount()
+      const scale = 4
+      const dim = size * scale
+      const canvas = document.createElement('canvas')
+      canvas.width = dim; canvas.height = dim
+      const ctx = canvas.getContext('2d')
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, dim, dim)
+      ctx.fillStyle = '#000000'
+      for (let r = 0; r < size; r++) {
+        for (let c = 0; c < size; c++) {
+          if (qr.isDark(r, c)) ctx.fillRect(c * scale, r * scale, scale, scale)
+        }
+      }
+      return canvas.toDataURL('image/png')
+    } catch (e) {
+      console.warn('QR generation failed:', e)
+      return null
+    }
+  }
+
+  const generateTemplatePdf = async () => {
     const chars = [...selected]
     if (chars.length === 0) return
     setTemplateChars(chars)
@@ -108,16 +148,24 @@ export default function App() {
     const makeCell = (ch, index) => `
       <div class="cell">
         <span class="cell-label">${escapeHtml(ch)}</span>
-        <span class="cell-anchor">${toCellCode(index)}</span>
+        <span class="cell-index">${index + 1}</span>
+        <div class="reg-tl"></div>
+        <div class="reg-tr"></div>
+        <div class="reg-bl"></div>
+        <div class="reg-br"></div>
         <div class="guide guide-top"></div>
         <div class="guide guide-mid"></div>
         <div class="guide guide-base"></div>
       </div>
     `
 
-    const sheets = Array.from({ length: pageCount }, (_, pageIndex) => {
+    // Build sheets async to allow QR generation
+    const sheetArray = await Promise.all(Array.from({ length: pageCount }, async (_, pageIndex) => {
       const pageStart = pageIndex * CELLS_PER_PAGE
       const pageChars = chars.slice(pageStart, pageStart + CELLS_PER_PAGE)
+      const pageCellCount = pageChars.length
+      const cellFrom = pageStart + 1
+      const cellTo = pageStart + pageCellCount
       const rows = []
 
       for (let rowStart = 0; rowStart < pageChars.length; rowStart += COLUMNS_PER_ROW) {
@@ -127,31 +175,35 @@ export default function App() {
         rows.push(`<div class="row">${cells}</div>`)
       }
 
-      const header =
-        pageIndex === 0
-          ? `
-            <div class="header">
-              <h1 class="title">Handwriting Generator Template</h1>
-              <p class="meta">Total glyphs: ${chars.length} • Generated: ${escapeHtml(now)}</p>
-              <p class="meta">Cell code format: HGxxx (ใช้ยึดตำแหน่งตอนอัปโหลดกลับใน Step 3)</p>
-            </div>
-          `
-          : `
-            <div class="header">
-              <h1 class="title">Handwriting Generator Template</h1>
-              <p class="meta">Continue template • Page ${pageIndex + 1}/${pageCount}</p>
-              <p class="meta">Cell code format: HGxxx (ใช้ยึดตำแหน่งตอนอัปโหลดกลับใน Step 3)</p>
-            </div>
-          `
+      // QR encodes: page info + cell range so Step3 can read it even after GoodNotes rescale
+      const qrText = `HG:p=${pageIndex + 1}/${pageCount},c=${cellFrom}-${cellTo},n=${pageCellCount},t=${chars.length}`
+      const qrDataUrl = await makeQrDataUrl(qrText)
+      const qrImg = qrDataUrl
+        ? `<img src="${qrDataUrl}" class="page-qr" title="${qrText}" />`
+        : `<span class="page-qr-fallback">${qrText}</span>`
+
+      const header = `
+        <div class="header">
+          <h1 class="title">Handwriting Generator Template</h1>
+          <p class="meta">Total glyphs: ${chars.length} • Page ${pageIndex + 1}/${pageCount} • Cells ${cellFrom}–${cellTo} (${pageCellCount} cells)</p>
+          <p class="meta">Cell code format: HGxxx (ใช้ยึดตำแหน่งตอนอัปโหลดกลับใน Step 3)</p>
+          ${qrImg}
+        </div>
+      `
+
+      // Machine-readable text tag as backup
+      const metaTag = `<p style="font-size:0px;color:transparent;user-select:none">HGMETA:page=${pageIndex + 1},totalPages=${pageCount},from=${cellFrom},to=${cellTo},count=${pageCellCount},total=${chars.length}</p>`
 
       return `
         <section class="sheet">
           ${header}
           <div class="grid">${rows.join("")}</div>
           <p class="footer">Practice sheet • Trace over the dotted shape • ${pageIndex + 1}/${pageCount}</p>
+          ${metaTag}
         </section>
       `
-    }).join("")
+    }))
+    const sheets = sheetArray.join("")
 
     const html = `
       <!doctype html>
@@ -208,19 +260,32 @@ export default function App() {
               font-family: "DM Sans", Arial, sans-serif;
               line-height: 1;
             }
-            .cell-anchor {
+            .cell-index {
               position: absolute;
               top: 2px;
               right: 4px;
-              font-size: 6px;
-              color: #FFFFFF;
-              opacity: 1;
-              z-index: 1;
+              font-size: 7px;
+              color: #8EA9C7;
               font-family: "DM Sans", Arial, sans-serif;
-              letter-spacing: 0.02em;
+              font-weight: 600;
+              line-height: 1;
+              z-index: 2;
               pointer-events: none;
               user-select: none;
             }
+            /* Registration corner dots — Step 3 uses these to locate each cell precisely */
+            .reg-tl, .reg-tr, .reg-bl, .reg-br {
+              position: absolute;
+              width: 4px;
+              height: 4px;
+              border-radius: 50%;
+              background: #3A7BD5;
+              z-index: 3;
+            }
+            .reg-tl { top: 2px; left: 2px; }
+            .reg-tr { top: 2px; right: 2px; }
+            .reg-bl { bottom: 2px; left: 2px; }
+            .reg-br { bottom: 2px; right: 2px; }
             .guide {
               position: absolute;
               left: 4%;
@@ -237,6 +302,24 @@ export default function App() {
               font-size: 10px;
               color: #5C7694;
               font-family: "DM Sans", Arial, sans-serif;
+            }
+            .page-qr {
+              position: absolute;
+              top: 4mm;
+              right: 0;
+              width: 18mm;
+              height: 18mm;
+              image-rendering: pixelated;
+            }
+            .page-qr-fallback {
+              position: absolute;
+              top: 4mm;
+              right: 0;
+              font-size: 6px;
+              color: #888;
+            }
+            .header {
+              position: relative;
             }
             .sheet {
               break-inside: avoid;
@@ -288,10 +371,10 @@ export default function App() {
     window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
   }
 
-  const handleNext = () => {
+  const handleNext = async () => {
     if (step === 1) {
       if (selected.size > 0) {
-        generateTemplatePdf()
+        await generateTemplatePdf()
       } else {
         setTemplateChars([])
       }

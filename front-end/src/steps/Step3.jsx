@@ -9,6 +9,31 @@ GlobalWorkerOptions.workerSrc = pdfWorker
 
 const GRID_COLS = 6
 const TEMPLATE_CODE_RE = /^HG(\d{1,4})$/i
+const HGMETA_RE = /HGMETA:page=(\d+),totalPages=(\d+),from=(\d+),to=(\d+),count=(\d+),total=(\d+)/
+const HGQR_RE = /HG:p=(\d+)\/(\d+),c=(\d+)-(\d+),n=(\d+),t=(\d+)/
+
+// Scan imageData for QR code using jsQR (loaded via CDN)
+function decodeQRFromImageData(imageData, width, height) {
+  try {
+    const jsQR = window.jsQR
+    if (!jsQR) return null
+    const result = jsQR(imageData, width, height, { inversionAttempts: "dontInvert" })
+    if (!result?.data) return null
+    const m = result.data.match(HGQR_RE)
+    if (!m) return null
+    return {
+      page: Number(m[1]),
+      totalPages: Number(m[2]),
+      cellFrom: Number(m[3]),
+      cellTo: Number(m[4]),
+      cellCount: Number(m[5]),
+      totalGlyphs: Number(m[6]),
+      qrBounds: result.location,
+    }
+  } catch {
+    return null
+  }
+}
 const TEMPLATE_INDEX_RE = /^(\d{1,4})$/
 const MIN_TRUSTED_INDEX_TARGETS = 6
 const GRID_CONFIG = {
@@ -47,6 +72,102 @@ function median(values) {
   const mid = Math.floor(sorted.length / 2)
   if (sorted.length % 2 === 1) return sorted[mid]
   return (sorted[mid - 1] + sorted[mid]) / 2
+}
+
+// Detect blue registration dots (from template corner markers) in imageData.
+// Returns array of {x, y} center positions.
+function detectRegDots(imageData, pageWidth, pageHeight) {
+  const data = imageData
+  const dots = []
+  const visited = new Uint8Array(pageWidth * pageHeight)
+  const STEP = 2
+
+  for (let y = 0; y < pageHeight; y += STEP) {
+    for (let x = 0; x < pageWidth; x += STEP) {
+      const idx = (y * pageWidth + x) * 4
+      const r = data[idx], g = data[idx + 1], b = data[idx + 2], a = data[idx + 3]
+      if (a < 100) continue
+      // Blue registration dot: b dominant, moderate saturation
+      if (b < 140 || b - r < 40 || b - g < 30) continue
+      if (visited[y * pageWidth + x]) continue
+
+      // Flood-fill to find dot extent
+      let minX = x, maxX = x, minY = y, maxY = y, count = 0
+      const stack = [[x, y]]
+      while (stack.length > 0) {
+        const [cx, cy] = stack.pop()
+        if (cx < 0 || cx >= pageWidth || cy < 0 || cy >= pageHeight) continue
+        if (visited[cy * pageWidth + cx]) continue
+        const i2 = (cy * pageWidth + cx) * 4
+        const r2 = data[i2], g2 = data[i2+1], b2 = data[i2+2], a2 = data[i2+3]
+        if (a2 < 80 || b2 < 120 || b2 - r2 < 30 || b2 - g2 < 20) continue
+        visited[cy * pageWidth + cx] = 1
+        count++
+        if (cx < minX) minX = cx; if (cx > maxX) maxX = cx
+        if (cy < minY) minY = cy; if (cy > maxY) maxY = cy
+        stack.push([cx+1,cy],[cx-1,cy],[cx,cy+1],[cx,cy-1])
+      }
+
+      const w = maxX - minX + 1
+      const h = maxY - minY + 1
+      // Registration dots are ~4px rendered at scale=3 → ~12px, allow range 6–30px
+      if (count < 20 || w < 5 || h < 5 || w > 40 || h > 40) continue
+      dots.push({ x: (minX + maxX) / 2, y: (minY + maxY) / 2, w, h })
+    }
+  }
+  return dots
+}
+
+// From detected registration dots, compute per-cell positions.
+// Each cell has 4 corner dots: TL, TR, BL, BR.
+// Groups nearby dots into cell quads using grid structure.
+function buildCellRectsFromDots(dots, pageWidth, pageHeight, expectedCols, expectedCount) {
+  if (dots.length < 4) return null
+
+  // Sort by Y then X to find grid structure
+  const sorted = [...dots].sort((a, b) => a.y - b.y || a.x - b.x)
+
+  // Estimate cell pitch from dot spacing
+  const xs = [...new Set(dots.map(d => Math.round(d.x / 8) * 8))].sort((a,b) => a-b)
+  const ys = [...new Set(dots.map(d => Math.round(d.y / 8) * 8))].sort((a,b) => a-b)
+
+  if (xs.length < 2 || ys.length < 2) return null
+
+  // Each cell column boundary is defined by pairs of x positions (left-dot, right-dot)
+  // Group x positions into pairs by proximity
+  const colXs = [] // center x of each column's left edge dots
+  let i = 0
+  while (i < xs.length) {
+    let j = i + 1
+    while (j < xs.length && xs[j] - xs[i] < pageWidth * 0.12) j++
+    colXs.push(xs[i])
+    i = j
+  }
+
+  const rowYs = []
+  let ri = 0
+  while (ri < ys.length) {
+    let rj = ri + 1
+    while (rj < ys.length && ys[rj] - ys[ri] < pageHeight * 0.08) rj++
+    rowYs.push(ys[ri])
+    ri = rj
+  }
+
+  if (colXs.length < 2 || rowYs.length < 2) return null
+
+  // Build cell rects from grid intersections
+  const cellRects = []
+  for (let row = 0; row + 1 < rowYs.length; row++) {
+    for (let col = 0; col + 1 < colXs.length; col++) {
+      const x1 = colXs[col]
+      const y1 = rowYs[row]
+      const x2 = colXs[col + 1]
+      const y2 = rowYs[row + 1]
+      cellRects.push({ x: x1, y: y1, w: x2 - x1, h: y2 - y1, row, col })
+    }
+  }
+
+  return cellRects.length > 0 ? cellRects : null
 }
 
 function buildTargetsFromPages(pages) {
@@ -309,6 +430,24 @@ async function collectTextAnchors(page, viewport, maxIndex) {
     }
   }
 
+  // Parse HGMETA tag — machine-readable cell count embedded by App.jsx
+  let pageMeta = null
+  for (const item of items) {
+    const raw = String(item?.str || "")
+    const m = raw.match(HGMETA_RE)
+    if (m) {
+      pageMeta = {
+        page: Number(m[1]),
+        totalPages: Number(m[2]),
+        cellFrom: Number(m[3]),
+        cellTo: Number(m[4]),
+        cellCount: Number(m[5]),
+        totalGlyphs: Number(m[6]),
+      }
+      break
+    }
+  }
+
   return {
     anchors,
     byIndex,
@@ -316,25 +455,40 @@ async function collectTextAnchors(page, viewport, maxIndex) {
     contiguousCount,
     hasCodeAnchors: codeAnchorCount > 0,
     codeAnchorCount,
+    pageMeta,
   }
 }
 
-function extractGlyphsFromCanvas({ ctx, pageWidth, pageHeight, chars, calibration }) {
-  const { gap, cellSize, startX, startY } = getGridGeometry(
-    pageWidth,
-    pageHeight,
-    chars.length,
-    calibration
-  )
+function extractGlyphsFromCanvas({ ctx, pageWidth, pageHeight, chars, calibration, cellRects }) {
+  // If we have cell rects from registration dots, use them directly — survives GoodNotes rescaling
+  const useRegDots = cellRects && cellRects.length >= chars.length
+
+  let gap, cellSize, startX, startY
+  if (!useRegDots) {
+    const geom = getGridGeometry(pageWidth, pageHeight, chars.length, calibration)
+    gap = geom.gap; cellSize = geom.cellSize; startX = geom.startX; startY = geom.startY
+  }
 
   return chars.map((ch, i) => {
     const row = Math.floor(i / GRID_COLS)
     const col = i % GRID_COLS
 
-    const x = Math.round(startX + col * (cellSize + gap))
-    const y = Math.round(startY + row * (cellSize + gap))
-    const inset = Math.round(cellSize * GRID_CONFIG.insetRatio)
-    const size = Math.max(20, Math.round(cellSize - inset * 2))
+    let x, y, size
+    if (useRegDots && cellRects[i]) {
+      const rect = cellRects[i]
+      const insetR = Math.round(rect.w * GRID_CONFIG.insetRatio)
+      x = rect.x; y = rect.y
+      size = Math.max(20, Math.round(Math.min(rect.w, rect.h) - insetR * 2))
+    } else {
+      const inset = Math.round(cellSize * GRID_CONFIG.insetRatio)
+      x = Math.round(startX + col * (cellSize + gap))
+      y = Math.round(startY + row * (cellSize + gap))
+      size = Math.max(20, Math.round(cellSize - inset * 2))
+    }
+
+    const inset = useRegDots && cellRects[i]
+      ? Math.round(Math.min(cellRects[i].w, cellRects[i].h) * GRID_CONFIG.insetRatio)
+      : Math.round(cellSize * GRID_CONFIG.insetRatio)
 
     const cropX = clamp(x + inset, 0, Math.max(0, pageWidth - size))
     const cropY = clamp(y + inset, 0, Math.max(0, pageHeight - size))
@@ -645,20 +799,24 @@ function GridDebugOverlay({ pageRef, pageVersion, chars, calibration }) {
       if (!srcCtx) continue
 
       const remaining = chars.length - cursor
-      // Same calibration as extraction — TEMPLATE_CALIBRATION + manual slider
       const pageGeomCalib = {
         offsetX: TEMPLATE_CALIBRATION.offsetX + calibration.offsetX,
         offsetY: TEMPLATE_CALIBRATION.offsetY + calibration.offsetY,
         cellAdjust: TEMPLATE_CALIBRATION.cellAdjust + calibration.cellAdjust,
         gapAdjust: TEMPLATE_CALIBRATION.gapAdjust + calibration.gapAdjust,
       }
-      // Step 1: compute pageMaxCells exactly like analysisResult does
-      const geomForCap = getGridGeometry(pageWidth, pageHeight, Math.min(remaining, 24), pageGeomCalib)
-      let pageMaxCells = getPageCapacity(pageHeight, geomForCap.startY, geomForCap.cellSize, geomForCap.gap)
-      if ((page.anchorCapacity || 0) >= MIN_TRUSTED_INDEX_TARGETS) {
-        pageMaxCells = Math.min(pageMaxCells, page.anchorCapacity)
+      // Use HGMETA cellCount if available — exact value written into the PDF
+      let pageMaxCells
+      if (page.pageMeta?.cellCount > 0) {
+        pageMaxCells = Math.min(page.pageMeta.cellCount, remaining)
+      } else {
+        const geomForCap = getGridGeometry(pageWidth, pageHeight, Math.min(remaining, 24), pageGeomCalib)
+        pageMaxCells = getPageCapacity(pageHeight, geomForCap.startY, geomForCap.cellSize, geomForCap.gap)
+        if ((page.anchorCapacity || 0) >= MIN_TRUSTED_INDEX_TARGETS) {
+          pageMaxCells = Math.min(pageMaxCells, page.anchorCapacity)
+        }
+        pageMaxCells = Math.min(pageMaxCells, remaining)
       }
-      pageMaxCells = Math.min(pageMaxCells, remaining)
       if (pageMaxCells <= 0) continue
 
       // Step 2: geometry for drawing — use pageMaxCells like extractGlyphsFromCanvas
@@ -791,6 +949,16 @@ export default function Step3({ selected, pdfFile, templateChars = [], onGlyphsU
         let pdf = null
 
         try {
+          // Load jsQR for QR decoding if not already loaded
+          if (!window.jsQR) {
+            await new Promise((resolve, reject) => {
+              const s = document.createElement('script')
+              s.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js'
+              s.onload = resolve; s.onerror = reject
+              document.head.appendChild(s)
+            }).catch(() => {})
+          }
+
           const bytes = new Uint8Array(await pdfFile.arrayBuffer())
           loadingTask = getDocument({ data: bytes })
           pdf = await loadingTask.promise
@@ -811,12 +979,15 @@ export default function Step3({ selected, pdfFile, templateChars = [], onGlyphsU
 
             await page.render({ canvasContext: ctx, viewport }).promise
             const anchorInfo = await collectTextAnchors(page, viewport, 9999)
-            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height).data
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+            const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+            // Decode QR code embedded in template for precise page/cell metadata
+            const qrMeta = decodeQRFromImageData(imgData.data, canvas.width, canvas.height)
             pages.push({
               ctx,
               pageWidth: canvas.width,
               pageHeight: canvas.height,
-              imageData,
+              imageData: imgData.data,
               pageNumber,
               anchors: anchorInfo.anchors,
               anchorByIndex: anchorInfo.byIndex,
@@ -824,6 +995,8 @@ export default function Step3({ selected, pdfFile, templateChars = [], onGlyphsU
               contiguousCount: anchorInfo.contiguousCount,
               hasCodeAnchors: anchorInfo.hasCodeAnchors,
               codeAnchorCount: anchorInfo.codeAnchorCount || 0,
+              // QR meta takes priority over HGMETA text tag
+              pageMeta: qrMeta || anchorInfo.pageMeta || null,
             })
           }
 
@@ -910,26 +1083,37 @@ export default function Step3({ selected, pdfFile, templateChars = [], onGlyphsU
       // Keep slot mapping deterministic across pages (1..N) to avoid noisy header/footer anchors shifting indices.
       const startIndex = cursor
 
-      const geometry = getGridGeometry(
-        page.pageWidth,
-        page.pageHeight,
-        Math.min(chars.length - startIndex, 24),
-        pageCalibration
-      )
-      let pageMaxCells = getPageCapacity(
-        page.pageHeight,
-        geometry.startY,
-        geometry.cellSize,
-        geometry.gap
-      )
-      if (page.anchorCapacity >= MIN_TRUSTED_INDEX_TARGETS) {
-        pageMaxCells = Math.min(pageMaxCells, page.anchorCapacity)
+      // HGMETA tag gives us the exact cell count written into this page — use it directly.
+      let pageMaxCells
+      if (page.pageMeta?.cellCount > 0) {
+        pageMaxCells = Math.min(page.pageMeta.cellCount, chars.length - startIndex)
+      } else {
+        const geometry = getGridGeometry(
+          page.pageWidth,
+          page.pageHeight,
+          Math.min(chars.length - startIndex, 24),
+          pageCalibration
+        )
+        pageMaxCells = getPageCapacity(
+          page.pageHeight,
+          geometry.startY,
+          geometry.cellSize,
+          geometry.gap
+        )
+        if (page.anchorCapacity >= MIN_TRUSTED_INDEX_TARGETS) {
+          pageMaxCells = Math.min(pageMaxCells, page.anchorCapacity)
+        }
+        pageMaxCells = Math.min(pageMaxCells, chars.length - startIndex)
       }
-      pageMaxCells = Math.min(pageMaxCells, chars.length - startIndex)
       if (pageMaxCells <= 0) continue
 
       const pageChars = chars.slice(startIndex, startIndex + pageMaxCells)
       if (pageChars.length === 0) continue
+
+      // Build cell rects from registration dots if available
+      const pageCellRects = page.regDots?.length >= 4
+        ? buildCellRectsFromDots(page.regDots, page.pageWidth, page.pageHeight, GRID_COLS, pageMaxCells)
+        : null
 
       const pageGlyphs = extractGlyphsFromCanvas({
         ctx: page.ctx,
@@ -937,6 +1121,7 @@ export default function Step3({ selected, pdfFile, templateChars = [], onGlyphsU
         pageHeight: page.pageHeight,
         chars: pageChars,
         calibration: pageCalibration,
+        cellRects: pageCellRects,
       }).map((g, i) => ({
         ...g,
         id: `p${page.pageNumber}-${startIndex + i}-${g.ch}`,
