@@ -335,6 +335,10 @@ export default function Step5({
   const [marginPx, setMarginPx] = useState(48)
   const [showVersionDebug, setShowVersionDebug] = useState(false)
 
+  // Zoom เฉพาะฝั่ง preview (ไม่กระทบ Export PDF)
+  const [previewZoom, setPreviewZoom] = useState(1)
+  // ใช้ transform scale กับฝั่ง preview เพื่อลด layout shift
+
   const TEXT_COLORS = ["#2C2416", "#1a3a5c", "#2e6b3e", "#8b3a2a", "#5c3d7a", "#605e5c"]
   const HL_COLORS = ["", "#fff9c4", "#c8f7c5", "#d4e6ff", "#ffe0cc", "#f5d0f5"]
 
@@ -457,7 +461,7 @@ export default function Step5({
         } else if (hasSvg) {
           const vb = g.viewBox || "0 0 100 100"
           inner =
-            `<svg viewBox="${vb}" style="width:100%;height:100%;display:block;shape-rendering:geometricPrecision" aria-label="${escapeHtml(ct.ch)}">` +
+            `<svg viewBox="${vb}" style="width:100%;height:100%;display:block;shape-rendering:geometricPrecision;overflow:visible" aria-label="${escapeHtml(ct.ch)}">` +
             `<path d="${escapeHtml(g.svgPath)}" fill="none" stroke="${textColor}" ` +
             `stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" paint-order="stroke fill"/></svg>`
         } else {
@@ -998,46 +1002,118 @@ body {
             borderRadius: 6,
             border: `1px solid #1a1a1a`,
             boxShadow: "inset 0 0 0 1px rgba(255,255,255,.04)",
-            overflow: "auto",
+            overflowY: "scroll",
+            overflowX: "hidden",
+            position: "relative",
             display: "flex",
             justifyContent: "center",
             alignItems: "flex-start",
             padding: "12px 10px 16px",
           }}
         >
+          {/* Zoom controls (preview only) */}
+          <div
+            style={{
+              position: "absolute",
+              top: 8,
+              right: 10,
+              zIndex: 5,
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              background: "rgba(255,255,255,0.92)",
+              border: `1px solid ${W.ribbonBorder}`,
+              borderRadius: 10,
+              padding: "6px 8px",
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setPreviewZoom(z => Math.max(0.7, +(z - 0.1).toFixed(2)))}
+              style={{
+                width: 26,
+                height: 26,
+                borderRadius: 8,
+                border: `1px solid ${W.ribbonBorder}`,
+                background: "#fff",
+                cursor: "pointer",
+                fontSize: 14,
+                color: W.tabInk,
+              }}
+              aria-label="Zoom out"
+              title="Zoom out"
+            >
+              -
+            </button>
+            <span style={{ fontSize: 12, color: W.tabInkMuted, minWidth: 52, textAlign: "center" }}>
+              {Math.round(previewZoom * 100)}%
+            </span>
+            <button
+              type="button"
+              onClick={() => setPreviewZoom(z => Math.min(1.6, +(z + 0.1).toFixed(2)))}
+              style={{
+                width: 26,
+                height: 26,
+                borderRadius: 8,
+                border: `1px solid ${W.ribbonBorder}`,
+                background: "#fff",
+                cursor: "pointer",
+                fontSize: 14,
+                color: W.tabInk,
+              }}
+              aria-label="Zoom in"
+              title="Zoom in"
+            >
+              +
+            </button>
+          </div>
+
           <div
             style={{
               width: "100%",
               maxWidth: 595,
-              minHeight: 842,
-              background: W.page,
-              boxShadow: "0 4px 24px rgba(0,0,0,.45), 0 0 0 1px rgba(0,0,0,.12)",
-              padding: `${marginPx}px`,
-              boxSizing: "border-box",
+              minHeight: 842 * previewZoom,
+              position: "relative",
             }}
           >
             <div
               style={{
-                fontSize,
-                lineHeight,
-                color: textColor,
-                textAlign: alignment,
                 width: "100%",
-                maxWidth: "100%",
+                maxWidth: 595,
+                minHeight: 842,
+                background: W.page,
+                boxShadow: "0 4px 24px rgba(0,0,0,.45), 0 0 0 1px rgba(0,0,0,.12)",
+                padding: `${marginPx}px`,
                 boxSizing: "border-box",
-                minHeight: 640,
-                wordBreak: "break-word",
-                overflowWrap: "anywhere",
-                overflowX: "hidden",
-                WebkitFontSmoothing: "antialiased",
-                textRendering: "optimizeLegibility",
+                transform: `scale(${previewZoom})`,
+                transformOrigin: "top center",
               }}
             >
-              {tokens.length === 0 ? (
-                <span style={{ opacity: 0.35, color: W.tabInkMuted }}>พิมพ์ฝั่งซ้ายเพื่อดูลายมือบนกระดาษ…</span>
-              ) : (
-                tokens.map(renderToken)
-              )}
+              <div
+                style={{
+                  fontSize,
+                  lineHeight,
+                  color: textColor,
+                  textAlign: alignment,
+                  width: "100%",
+                  maxWidth: "100%",
+                  boxSizing: "border-box",
+                  minHeight: 640,
+                  wordBreak: "break-word",
+                  overflowWrap: "anywhere",
+                  overflowX: "hidden",
+                  WebkitFontSmoothing: "antialiased",
+                  textRendering: "optimizeLegibility",
+                }}
+              >
+                {tokens.length === 0 ? (
+                  <span style={{ opacity: 0.35, color: W.tabInkMuted }}>
+                    พิมพ์ฝั่งซ้ายเพื่อดูลายมือบนกระดาษ…
+                  </span>
+                ) : (
+                  tokens.map(renderToken)
+                )}
+              </div>
             </div>
           </div>
         </div>

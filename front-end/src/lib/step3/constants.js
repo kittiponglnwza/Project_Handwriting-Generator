@@ -19,8 +19,10 @@ export const GRID_CONFIG = {
 }
 
 export const DEFAULT_CALIBRATION = {
-  offsetX: 0,
-  offsetY: 0,
+  // ผสานค่าที่ต้อง “เลื่อนเพิ่ม” ให้พอดีต่อใช้งานจริงและส่งออก
+  // (ผู้ใช้ต้องปรับเพิ่ม x += 25, y += 37 เพื่อให้ตรง)
+  offsetX: 25,
+  offsetY: 37,
   cellAdjust: 0,
   gapAdjust: 0,
 }
