@@ -491,87 +491,40 @@ function classifyGlyph(imageData, width, height) {
 function buildInkOnlyImageData(imageData, width, height) {
   const cleaned = new ImageData(new Uint8ClampedArray(imageData.data), width, height)
   const { data } = cleaned
-  const rowGuideCount = new Array(height).fill(0)
-  const rowDarkCount = new Array(height).fill(0)
 
-  const isGuideTone = (r, g, b, a) => {
-    if (a < 16) return false
+  // ── Pass 1: สแกนทุก pixel → เก็บเฉพาะ ink มืด (ลายมือ) ──────────────────
+  // ลบทุกอย่างที่ไม่ใช่ ink: เส้นบรรทัด, พื้นหลัง, สีฟ้า/เทา, ขอบกล่อง
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i], g = data[i + 1], b = data[i + 2], a = data[i + 3]
+
+    if (a < 30) {
+      // transparent → white
+      data[i] = data[i+1] = data[i+2] = 255; data[i+3] = 255; continue
+    }
+
     const lum = r * 0.2126 + g * 0.7152 + b * 0.0722
+
+    // ── ลบ: เส้นบรรทัดสีฟ้า/เทาฟ้า (guide lines) ──────────────────────────
+    // ครอบคลุมทั้ง: สีเข้ม (#3A7BD5), สีอ่อน (#A8C1DD), ทุก shade ตรงกลาง
     const blueDom = b - Math.max(r, g)
-    const rgDiff = Math.abs(r - g)
-    return lum > 120 && lum < 245 && blueDom > 8 && blueDom < 86 && rgDiff < 42
-  }
-
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const idx = (y * width + x) * 4
-      const r = data[idx]
-      const g = data[idx + 1]
-      const b = data[idx + 2]
-      const a = data[idx + 3]
-      if (isGuideTone(r, g, b, a)) rowGuideCount[y] += 1
-      const lum = r * 0.2126 + g * 0.7152 + b * 0.0722
-      // ❌ ไม่นับ red-dominant pixel (ลายมือ) เป็น dark — กันรบกวน guide row detection
-      const isRedInk = r > 160 && r - b > 60 && r - g > 40
-      if (a > 16 && lum < 115 && !isRedInk) rowDarkCount[y] += 1
+    const isBlueFamily = blueDom > 5 && b > 100
+    if (isBlueFamily) {
+      data[i] = data[i+1] = data[i+2] = 255; data[i+3] = 255; continue
     }
-  }
 
-  const guideRows = new Array(height).fill(false)
-  for (let y = 0; y < height; y += 1) {
-    const guideRatio = rowGuideCount[y] / width
-    const darkRatio = rowDarkCount[y] / width
-    if (guideRatio > 0.26 && darkRatio < 0.2) {
-      guideRows[y] = true
-      if (y > 0) guideRows[y - 1] = true
-      if (y + 1 < height) guideRows[y + 1] = true
+    // ── ลบ: pixel สว่าง (พื้นหลัง, เส้นจาง, เงา) ──────────────────────────
+    if (lum > 180) {
+      data[i] = data[i+1] = data[i+2] = 255; data[i+3] = 255; continue
     }
-  }
 
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const idx = (y * width + x) * 4
-      const r = data[idx]
-      const g = data[idx + 1]
-      const b = data[idx + 2]
-      const a = data[idx + 3]
-      if (guideRows[y] && isGuideTone(r, g, b, a)) {
-        data[idx] = 255
-        data[idx + 1] = 255
-        data[idx + 2] = 255
-        data[idx + 3] = 255
-      }
-    }
-  }
-
-  for (let y = 0; y < height; y += 1) {
-    const rowGuideRatio = rowGuideCount[y] / width
-    for (let x = 0; x < width; x += 1) {
-      const idx = (y * width + x) * 4
-      const r = data[idx]
-      const g = data[idx + 1]
-      const b = data[idx + 2]
-      const a = data[idx + 3]
-      const lum = r * 0.2126 + g * 0.7152 + b * 0.0722
-      const blueDom = b - Math.max(r, g)
-
-      const shouldDropGuide =
-        lum > 168 &&
-        blueDom > 6 &&
-        rowGuideRatio > 0.12 &&
-        rowDarkCount[y] / width < 0.28
-
-      if (a > 12 && shouldDropGuide) {
-        data[idx] = 255
-        data[idx + 1] = 255
-        data[idx + 2] = 255
-        data[idx + 3] = 255
-      }
-    }
+    // ── เก็บ: ink มืด (ดินสอ, ปากกาดำ, ปากกาแดง) ──────────────────────────
+    // ทำให้ดำสนิทเพื่อ SVG trace คมชัด
+    data[i] = data[i+1] = data[i+2] = 0; data[i+3] = 255
   }
 
   return cleaned
 }
+
 
 function getGridGeometry(pageWidth, pageHeight, charsLength, calibration) {
   const baseGap = Math.max(6, pageWidth * GRID_CONFIG.gapRatio)
@@ -1195,147 +1148,82 @@ function Adjuster({ label, value, min, max, step, onChange }) {
   )
 }
 
-function GridDebugOverlay({ pageRef, pageVersion, chars, calibration }) {
-  const containerRef = useRef(null)
+function GridDebugOverlay({ glyphs }) {
+  const stStyle = {
+    ok:       { border: "rgba(0,160,70,0.5)",  bg: "rgba(0,200,80,0.06)",  dot: "#00a046" },
+    missing:  { border: "rgba(200,60,60,0.5)", bg: "rgba(255,80,80,0.06)", dot: "#c83c3c" },
+    overflow: { border: "rgba(200,140,0,0.5)", bg: "rgba(255,180,0,0.06)", dot: "#c88c00" },
+  }
 
-  useEffect(() => {
-    const container = containerRef.current
-    if (!container) return
-    const store = pageRef.current
-    if (!store?.pages?.length || chars.length === 0) return
-
-    // Clear previous renders
-    while (container.firstChild) container.removeChild(container.firstChild)
-
-    const DISPLAY_W = 320
-
-    let cursor = 0
-
-    for (const page of store.pages) {
-      if (cursor >= chars.length) break
-      const { ctx: srcCtx, pageWidth, pageHeight } = page
-      if (!srcCtx) continue
-
-      const pageStartIndexFromMeta =
-        page.pageMeta?.cellFrom > 0 ? page.pageMeta.cellFrom - 1 : null
-      const pageStartIndex = pageStartIndexFromMeta ?? cursor
-      const remaining = Math.max(0, chars.length - pageStartIndex)
-      if (remaining <= 0) continue
-      const baseCalibration = TEMPLATE_CALIBRATION
-      const pageGeomCalib = mergeCalibration(baseCalibration, calibration)
-      // Use HGMETA cellCount if available — exact value written into the PDF
-      let pageMaxCells
-      if (page.pageMeta?.cellCount > 0) {
-        pageMaxCells = Math.min(page.pageMeta.cellCount, remaining)
-      } else {
-        const geomForCap = getGridGeometry(pageWidth, pageHeight, Math.min(remaining, 24), pageGeomCalib)
-        pageMaxCells = getPageCapacity(pageHeight, geomForCap.startY, geomForCap.cellSize, geomForCap.gap)
-        if ((page.anchorCapacity || 0) >= MIN_TRUSTED_INDEX_TARGETS) {
-          pageMaxCells = Math.min(pageMaxCells, page.anchorCapacity)
-        }
-        pageMaxCells = Math.min(pageMaxCells, remaining)
-      }
-      // Hard cap: หน้านึงมีได้สูงสุด 6×6 = 36 ช่อง
-      pageMaxCells = Math.min(pageMaxCells, GRID_COLS * 6)
-      if (pageMaxCells <= 0) continue
-
-      const pageCellFrom = page.pageMeta?.cellFrom > 0 ? page.pageMeta.cellFrom : pageStartIndex + 1
-
-      const hasGridLines = (page.regDots?.length ?? 0) >= 4
-
-      // ⚠️ ใช้ let เพราะต้อง reassign หลัง apply calibration offset
-      let pageCellRectsOrdered = hasGridLines
-        ? buildOrderedCellRectsForPage(page, pageCellFrom, pageMaxCells)
-        : null
-      if (pageCellRectsOrdered) {
-        pageCellRectsOrdered = pageCellRectsOrdered.map(r => ({
-          ...r,
-          x: r.x + calibration.offsetX,
-          y: r.y + calibration.offsetY,
-        }))
-      }
-
-      const scaleF = DISPLAY_W / pageWidth
-      const canvas = document.createElement("canvas")
-      canvas.width = DISPLAY_W
-      canvas.height = Math.round(pageHeight * scaleF)
-
-      const ctx = canvas.getContext("2d")
-      ctx.save(); ctx.scale(scaleF, scaleF); ctx.drawImage(srcCtx.canvas, 0, 0); ctx.restore()
-
-      // ❌ ถ้า line detection ไม่สำเร็จ — วาด overlay แจ้ง user
-      if (!pageCellRectsOrdered) {
-        const dotsCount = page.regDots?.length ?? 0
-        ctx.save()
-        ctx.fillStyle = "rgba(220,40,40,0.12)"
-        ctx.fillRect(0, 0, canvas.width, canvas.height)
-        ctx.fillStyle = "rgba(200,30,30,0.9)"
-        ctx.font = `bold ${Math.round(canvas.height * 0.035)}px sans-serif`
-        ctx.textAlign = "center"
-        ctx.fillText(
-          `⚠️ reg dots ไม่พอ — detect ได้ ${dotsCount} จุด`,
-          canvas.width / 2,
-          canvas.height * 0.5
-        )
-        ctx.restore()
-      } else {
-        ctx.save(); ctx.scale(scaleF, scaleF)
-        for (let i = 0; i < pageMaxCells; i++) {
-          if (!pageCellRectsOrdered[i]) continue
-          const rect = pageCellRectsOrdered[i]
-          const cx = Math.round(rect.x)
-          const cy = Math.round(rect.y)
-          const outerW = Math.round(rect.w)
-          const outerH = Math.round(rect.h)
-          const insetR = Math.round(Math.min(rect.w, rect.h) * GRID_CONFIG.insetRatio)
-          const cropSize = Math.max(20, Math.round(Math.min(rect.w, rect.h) - insetR * 2))
-          const cropX = clamp(cx + insetR, 0, Math.max(0, pageWidth - cropSize))
-          const cropY = clamp(cy + insetR, 0, Math.max(0, pageHeight - cropSize))
-          const targetChar = String(chars[pageStartIndex + i] || "")
-
-          // 🟩 outer cell
-          ctx.strokeStyle = "rgba(0,200,80,0.9)"; ctx.lineWidth = 1.5 / scaleF
-          ctx.strokeRect(cx, cy, outerW, outerH)
-
-          // 🟦 crop zone — ตรงกับ extractGlyphsFromCanvas จริงๆ
-          ctx.strokeStyle = "rgba(30,100,255,0.7)"; ctx.lineWidth = 1 / scaleF
-          ctx.strokeRect(cropX, cropY, cropSize, cropSize)
-
-          // label
-          const fontSize = Math.round(cropSize * 0.18)
-          ctx.fillStyle = "rgba(0,0,0,0.75)"
-          ctx.font = `bold ${fontSize}px sans-serif`
-          ctx.fillText(targetChar, cropX + 3, cropY + fontSize)
-        }
-        ctx.restore()
-      }
-
-      const label = document.createElement("p")
-      label.textContent = `หน้า ${page.pageNumber}  (ช่อง ${pageStartIndex + 1}–${pageStartIndex + pageMaxCells})`
-      label.style.cssText = "font-size:10px;color:#888;text-align:center;margin:0 0 4px;font-family:sans-serif"
-
-      const wrapper = document.createElement("div")
-      wrapper.style.cssText = "display:flex;flex-direction:column;flex-shrink:0"
-      canvas.style.cssText = "border-radius:8px;border:1px solid #ddd;display:block;width:100%"
-      wrapper.appendChild(label)
-      wrapper.appendChild(canvas)
-      container.appendChild(wrapper)
-
-      cursor = Math.max(cursor, pageStartIndex + pageMaxCells)
-    }
-  }, [pageRef, pageVersion, chars, calibration])
+  if (!glyphs?.length) return (
+    <p style={{ fontSize: 11, color: C.inkLt, padding: "8px 0" }}>ยังไม่มีข้อมูล glyph</p>
+  )
 
   return (
     <div
-      ref={containerRef}
       style={{
-        display: "flex",
-        gap: 12,
-        overflowX: "auto",
-        paddingBottom: 4,
-        alignItems: "flex-start",
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fill, minmax(72px, 1fr))",
+        gap: 6,
       }}
-    />
+    >
+      {glyphs.map(g => {
+        const s = stStyle[g.status] || stStyle.ok
+        return (
+          <div
+            key={g.id}
+            style={{
+              background: s.bg,
+              border: `1.5px solid ${s.border}`,
+              borderRadius: 8,
+              padding: "6px 4px 5px",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: 3,
+            }}
+          >
+            {/* SVG trace */}
+            <div
+              style={{
+                width: "100%",
+                aspectRatio: "1",
+                background: "#fff",
+                borderRadius: 5,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              {g.svgPath ? (
+                <svg
+                  viewBox={g.viewBox || "0 0 100 100"}
+                  style={{ width: "88%", height: "88%", overflow: "visible" }}
+                >
+                  <path
+                    d={g.svgPath}
+                    fill="none"
+                    stroke={C.ink}
+                    strokeWidth="3"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              ) : (
+                <span style={{ fontSize: 9, color: C.inkLt }}>—</span>
+              )}
+            </div>
+
+            {/* target char + index */}
+            <p style={{ fontSize: 13, fontWeight: 600, color: C.ink, lineHeight: 1 }}>{g.ch}</p>
+            <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: s.dot, flexShrink: 0 }} />
+              <p style={{ fontSize: 9, color: C.inkLt }}>#{g.index}</p>
+            </div>
+          </div>
+        )
+      })}
+    </div>
   )
 }
 
@@ -1898,10 +1786,10 @@ export default function Step3({ selected, pdfFile, templateChars = [], onGlyphsU
 
       {showDebug && (
         <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 14, padding: 14, marginBottom: 14 }}>
-          <p style={{ fontSize: 11, color: C.inkLt, marginBottom: 8 }}>
-            🟩 outer cell &nbsp;|&nbsp; 🟦 crop zone — ปรับ slider แล้ว overlay อัปเดตตาม
+          <p style={{ fontSize: 11, color: C.inkLt, marginBottom: 10 }}>
+            ภาพที่ crop จากแต่ละช่อง — ขอบสีแสดงสถานะ: <span style={{ color: "#00a046" }}>●</span> OK &nbsp; <span style={{ color: "#c83c3c" }}>●</span> Missing &nbsp; <span style={{ color: "#c88c00" }}>●</span> Overflow
           </p>
-          <GridDebugOverlay pageRef={pageRef} pageVersion={pageVersion} chars={chars} calibration={calibration} />
+          <GridDebugOverlay glyphs={displayGlyphs} />
         </div>
       )}
 

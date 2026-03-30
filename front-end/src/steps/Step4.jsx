@@ -1,4 +1,4 @@
-﻿import { useMemo, useState } from "react"
+﻿import { useMemo, useState, useEffect } from "react"
 import Btn from "../components/Btn"
 import C from "../styles/colors"
 
@@ -48,7 +48,73 @@ function buildVariant(char, seed, version) {
   }
 }
 
-export default function Step4({ selected, templateChars = [], extractedGlyphs = [] }) {
+// ─── Canonical path deformation — shared with Step5 via import ────────────────
+// version 1 = original, 2 = drooping tail, 3 = wavy/imperfect
+export function deformPath(svgPath, version) {
+  if (!svgPath || version === 1) return svgPath
+
+  return svgPath.replace(
+    /([ML])\s+([-]?[\d.]+)\s+([-]?[\d.]+)/g,
+    (match, cmd, xStr, yStr) => {
+      try {
+        let x = parseFloat(xStr)
+        let y = parseFloat(yStr)
+        if (isNaN(x) || isNaN(y)) return match
+
+        if (version === 2) {
+          const drop = (y / 100) * 5
+          y += drop
+          x -= (y / 100) * 1.5
+        } else if (version === 3) {
+          x += Math.sin(y * 0.15) * 1.5
+          y += Math.cos(x * 0.15) * 1.5
+        }
+        return `${cmd} ${x.toFixed(1)} ${y.toFixed(1)}`
+      } catch {
+        return match
+      }
+    }
+  )
+}
+
+// ─── Produce flat versioned-glyph array for Step5 ────────────────────────────
+// Each source glyph → 3 entries (version 1, 2, 3) with deformed svgPath.
+// Step5 maps ch → [all versions] and picks one per character slot via RNG.
+export function buildVersionedGlyphs(extractedGlyphs) {
+  const result = []
+  for (const g of extractedGlyphs) {
+    const hasSvg =
+      typeof g.svgPath === "string" &&
+      g.svgPath.trim() !== "" &&
+      g.svgPath.trim() !== "M 0 0"
+
+    for (const ver of [1, 2, 3]) {
+      result.push({
+        ...g,
+        id: `${g.id}-v${ver}`,
+        version: ver,
+        svgPath: hasSvg ? deformPath(g.svgPath, ver) : (g.svgPath || ""),
+        // PNG preview stays the same — visual variety relies on SVG deformation.
+        // Step5 renders SVG when available; PNG is the fallback.
+        preview:    g.preview    || "",
+        previewInk: g.previewInk || "",
+        verLabel:
+          ver === 1 ? "Ver 1: ต้นฉบับ" :
+          ver === 2 ? "Ver 2: หางตก"   :
+                     "Ver 3: เส้นแกว่ง",
+      })
+    }
+  }
+  return result
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
+export default function Step4({
+  selected,
+  templateChars = [],
+  extractedGlyphs = [],
+  onGlyphsReady,          // (versionedGlyphs: GlyphEntry[]) => void
+}) {
   const seed = SEEDS[1]
   const sourceChars = useMemo(
     () => (templateChars.length > 0 ? templateChars : [...selected]),
@@ -70,58 +136,54 @@ export default function Step4({ selected, templateChars = [], extractedGlyphs = 
     return sourceChars[0] || "ก"
   }, [hasFileSource, activeFileGlyph, pickedChar, sourceChars])
 
-  const basePreview = hasFileSource
-    ? activeFileGlyph?.preview || ""
-    : ""
+  const basePreview = hasFileSource ? activeFileGlyph?.preview || "" : ""
 
-  const variants = useMemo(() => {
-    return [1, 2, 3].map(v => buildVariant(baseChar || "ก", seed, v))
-  }, [baseChar, seed])
+  const variants = useMemo(
+    () => [1, 2, 3].map(v => buildVariant(baseChar || "ก", seed, v)),
+    [baseChar, seed]
+  )
+
+  // ── Build & emit versionedGlyphs whenever source changes ─────────────────
+  const versionedGlyphs = useMemo(
+    () => buildVersionedGlyphs(extractedGlyphs),
+    [extractedGlyphs]
+  )
+
+  useEffect(() => {
+    if (typeof onGlyphsReady === "function") {
+      onGlyphsReady(versionedGlyphs)
+    }
+  }, [versionedGlyphs, onGlyphsReady])
 
   const handleRandom = () => {
     if (hasFileSource) {
-      const randomIndex = Math.floor(Math.random() * extractedGlyphs.length)
-      const randomGlyph = extractedGlyphs[randomIndex]
-      if (randomGlyph) setPickedGlyphId(randomGlyph.id)
+      const idx = Math.floor(Math.random() * extractedGlyphs.length)
+      const g = extractedGlyphs[idx]
+      if (g) setPickedGlyphId(g.id)
       return
     }
-
     if (sourceChars.length === 0) return
-    const randomIndex = Math.floor(Math.random() * sourceChars.length)
-    setPickedChar(sourceChars[randomIndex])
+    setPickedChar(sourceChars[Math.floor(Math.random() * sourceChars.length)])
   }
 
-  // ==========================================
-  // 🕵️‍♂️ เครื่องมือดักจับบั๊ก (ดูผลลัพธ์ได้ใน F12 -> Console)
-  // ==========================================
-  console.log("📦 ข้อมูลทั้งหมดที่ส่งมาจาก Step 3:", extractedGlyphs);
-  console.log("🎯 ตัวอักษรที่กำลังเลือกอยู่:", activeFileGlyph);
+  console.log("📦 ข้อมูลทั้งหมดที่ส่งมาจาก Step 3:", extractedGlyphs)
+  console.log("🎯 ตัวอักษรที่กำลังเลือกอยู่:", activeFileGlyph)
+  console.log("🔀 Versioned glyphs ที่ส่งให้ Step 5:", versionedGlyphs.length, "entries")
 
   return (
     <div className="fade-up">
       <div style={{ marginBottom: 24 }}>
-        <p
-          style={{
-            fontSize: 10,
-            fontWeight: 500,
-            letterSpacing: "0.1em",
-            textTransform: "uppercase",
-            color: C.inkLt,
-            marginBottom: 8,
-          }}
-        >
+        <p style={{
+          fontSize: 10, fontWeight: 500, letterSpacing: "0.1em",
+          textTransform: "uppercase", color: C.inkLt, marginBottom: 8,
+        }}>
           1 Glyph to 3 Versions
         </p>
 
-        <div
-          style={{
-            background: C.bgCard,
-            border: `1px solid ${C.border}`,
-            borderRadius: 14,
-            padding: "14px 16px",
-            marginBottom: 12,
-          }}
-        >
+        <div style={{
+          background: C.bgCard, border: `1px solid ${C.border}`,
+          borderRadius: 14, padding: "14px 16px", marginBottom: 12,
+        }}>
           <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
             <span style={{ fontSize: 12, color: C.inkMd }}>
               {hasFileSource ? "เลือกตัวจากไฟล์ PDF:" : "เลือกตัวอักษรต้นแบบ:"}
@@ -129,39 +191,21 @@ export default function Step4({ selected, templateChars = [], extractedGlyphs = 
             <select
               value={hasFileSource ? activeFileGlyph?.id || "" : baseChar}
               onChange={e => {
-                if (hasFileSource) {
-                  setPickedGlyphId(e.target.value)
-                } else {
-                  setPickedChar(e.target.value)
-                }
+                if (hasFileSource) setPickedGlyphId(e.target.value)
+                else setPickedChar(e.target.value)
               }}
               style={{
-                minWidth: 180,
-                border: `1px solid ${C.border}`,
-                borderRadius: 8,
-                padding: "6px 10px",
-                fontSize: 13,
-                background: C.bgCard,
-                color: C.ink,
+                minWidth: 180, border: `1px solid ${C.border}`, borderRadius: 8,
+                padding: "6px 10px", fontSize: 13, background: C.bgCard, color: C.ink,
               }}
             >
               {hasFileSource
                 ? extractedGlyphs.map(g => (
-                    <option key={g.id} value={g.id}>
-                      {g.ch} • ช่อง {g.index}
-                    </option>
+                    <option key={g.id} value={g.id}>{g.ch} • ช่อง {g.index}</option>
                   ))
                 : sourceChars.length > 0
-                  ? sourceChars.map(ch => (
-                      <option key={ch} value={ch}>
-                        {ch}
-                      </option>
-                    ))
-                  : [
-                      <option key={baseChar} value={baseChar}>
-                        {baseChar}
-                      </option>,
-                    ]}
+                  ? sourceChars.map(ch => <option key={ch} value={ch}>{ch}</option>)
+                  : [<option key={baseChar} value={baseChar}>{baseChar}</option>]}
             </select>
             <Btn
               onClick={handleRandom}
@@ -181,95 +225,64 @@ export default function Step4({ selected, templateChars = [], extractedGlyphs = 
 
           {hasFileSource && activeFileGlyph && (
             <p style={{ fontSize: 11, color: C.inkLt, marginTop: 4 }}>
-              ตัวที่เลือก: ช่อง {activeFileGlyph.index || "-"} • {activeFileGlyph.ch || "?"} • สถานะ {activeFileGlyph.status ? String(activeFileGlyph.status).toUpperCase() : "UNKNOWN"}
+              ตัวที่เลือก: ช่อง {activeFileGlyph.index || "-"} • {activeFileGlyph.ch || "?"} •{" "}
+              สถานะ {activeFileGlyph.status ? String(activeFileGlyph.status).toUpperCase() : "UNKNOWN"}
             </p>
+          )}
+
+          {/* ── Version count badge ── */}
+          {hasFileSource && (
+            <div style={{
+              marginTop: 10, display: "inline-flex", alignItems: "center", gap: 6,
+              background: "#EBF5EE", border: "1px solid #A8D5B5",
+              borderRadius: 8, padding: "4px 10px", fontSize: 11, color: "#2E6B3E",
+            }}>
+              ✅ {versionedGlyphs.length} versioned glyphs พร้อมส่งให้ Step 5
+              ({extractedGlyphs.length} ตัว × 3 versions)
+            </div>
           )}
         </div>
 
+        {/* ── Version cards ── */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
           {variants.map(v => (
-            <div
-              key={v.version}
-              style={{
-                background: C.bgCard,
-                border: `1px solid ${C.border}`,
-                borderRadius: 14,
-                padding: "12px 12px 14px",
-              }}
-            >
-              <p
-                style={{
-                  fontSize: 10,
-                  fontWeight: 600,
-                  letterSpacing: "0.08em",
-                  textTransform: "uppercase",
-                  color: C.inkLt,
-                  marginBottom: 8,
-                }}
-              >
+            <div key={v.version} style={{
+              background: C.bgCard, border: `1px solid ${C.border}`,
+              borderRadius: 14, padding: "12px 12px 14px",
+            }}>
+              <p style={{
+                fontSize: 10, fontWeight: 600, letterSpacing: "0.08em",
+                textTransform: "uppercase", color: C.inkLt, marginBottom: 8,
+              }}>
                 ver {v.version}
               </p>
-              <div
-                style={{
-                  height: 150,
-                  borderRadius: 10,
-                  border: `1px dashed ${C.borderMd}`,
-                  background: "#fff",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  position: "relative",
-                  overflow: "hidden",
-                }}
-              >
+              <div style={{
+                height: 150, borderRadius: 10,
+                border: `1px dashed ${C.borderMd}`,
+                background: "#fff", display: "flex",
+                alignItems: "center", justifyContent: "center",
+                position: "relative", overflow: "hidden",
+              }}>
                 {!hasFileSource && (
-                  <div
-                    style={{
-                      position: "absolute",
-                      left: "7%",
-                      right: "7%",
-                      top: "58%",
-                      borderTop: `1px dashed ${C.borderMd}`,
-                    }}
-                  />
+                  <div style={{
+                    position: "absolute", left: "7%", right: "7%",
+                    top: "58%", borderTop: `1px dashed ${C.borderMd}`,
+                  }} />
                 )}
 
-                {/* --- ส่วนที่ใช้แสดงและดัด SVG ลายมือ (แบบกัน Error 100%) --- */}
-                {hasFileSource && activeFileGlyph && typeof activeFileGlyph.svgPath === "string" && activeFileGlyph.svgPath !== "M 0 0" ? (
+                {hasFileSource && activeFileGlyph &&
+                 typeof activeFileGlyph.svgPath === "string" &&
+                 activeFileGlyph.svgPath !== "M 0 0" ? (
                   <svg
                     viewBox={activeFileGlyph.viewBox || "0 0 100 100"}
-                    style={{
-                      width: "80%",
-                      height: "80%",
-                      overflow: "visible",
-                    }}
+                    style={{ width: "80%", height: "80%", overflow: "visible" }}
                   >
                     <g style={{ transformOrigin: "center" }}>
                       <path
-                        d={activeFileGlyph.svgPath.replace(/([ML])\s+([-]?[\d.]+)\s+([-]?[\d.]+)/g, (match, cmd, xStr, yStr) => {
-                          try {
-                            let x = parseFloat(xStr);
-                            let y = parseFloat(yStr);
-
-                            if (isNaN(x) || isNaN(y)) return match;
-
-                            if (v.version === 2) {
-                              const drop = (y / 100) * 5; 
-                              y += drop;
-                              x -= (y / 100) * 1.5; 
-                            } else if (v.version === 3) {
-                              x += Math.sin(y * 0.15) * 1.5;
-                              y += Math.cos(x * 0.15) * 1.5;
-                            }
-
-                            return `${cmd} ${x.toFixed(1)} ${y.toFixed(1)}`;
-                          } catch (e) {
-                            return match; // ถ้าดัดเส้นพัง ให้โชว์เส้นเดิม
-                          }
-                        })}
+                        d={deformPath(activeFileGlyph.svgPath, v.version)}
                         fill="none"
                         stroke={C.ink || "#000"}
-                        strokeWidth={v.weight > 500 ? "3.5" : "2.5"} 
+                        strokeWidth={v.weight > 500 ? "3.5" : "2.5"}
                         strokeLinecap="round"
                         strokeLinejoin="round"
                       />
@@ -280,33 +293,24 @@ export default function Step4({ selected, templateChars = [], extractedGlyphs = 
                     src={basePreview}
                     alt={`File glyph ${baseChar} ver ${v.version}`}
                     style={{
-                      width: "78%",
-                      height: "78%",
-                      objectFit: "contain",
+                      width: "78%", height: "78%", objectFit: "contain",
                       transform: `translate(${v.shiftX}px, ${v.shiftY}px) rotate(${v.rotate}deg) skewX(${v.skewX}deg) scale(${v.scaleX}, ${v.scaleY})`,
                       transformOrigin: "center",
                       filter: "contrast(1.08) saturate(0.9)",
                     }}
                   />
                 ) : (
-                  <span
-                    style={{
-                      display: "inline-block",
-                      fontSize: 108,
-                      lineHeight: 1,
-                      color: C.ink || "#000",
-                      fontWeight: v.weight,
-                      fontFamily: "'TH Sarabun New', 'Noto Sans Thai', 'Tahoma', sans-serif",
-                      transform: `translate(${v.shiftX}px, ${v.shiftY}px) rotate(${v.rotate}deg) skewX(${v.skewX}deg) scale(${v.scaleX}, ${v.scaleY})`,
-                      transformOrigin: "center",
-                      textShadow: "0 0 0.3px rgba(44,36,22,0.45)",
-                    }}
-                  >
+                  <span style={{
+                    display: "inline-block", fontSize: 108, lineHeight: 1,
+                    color: C.ink || "#000", fontWeight: v.weight,
+                    fontFamily: "'TH Sarabun New', 'Noto Sans Thai', 'Tahoma', sans-serif",
+                    transform: `translate(${v.shiftX}px, ${v.shiftY}px) rotate(${v.rotate}deg) skewX(${v.skewX}deg) scale(${v.scaleX}, ${v.scaleY})`,
+                    transformOrigin: "center",
+                    textShadow: "0 0 0.3px rgba(44,36,22,0.45)",
+                  }}>
                     {baseChar}
                   </span>
                 )}
-                {/* --- จบส่วน SVG --- */}
-
               </div>
               <p style={{ marginTop: 8, fontSize: 10, color: C.inkLt, lineHeight: 1.6 }}>
                 {hasFileSource ? (
@@ -324,29 +328,18 @@ export default function Step4({ selected, templateChars = [], extractedGlyphs = 
         </div>
       </div>
 
+      {/* ── Document Seed ── */}
       <div style={{ marginBottom: 24 }}>
-        <p
-          style={{
-            fontSize: 10,
-            fontWeight: 500,
-            letterSpacing: "0.1em",
-            textTransform: "uppercase",
-            color: C.inkLt,
-            marginBottom: 8,
-          }}
-        >
+        <p style={{
+          fontSize: 10, fontWeight: 500, letterSpacing: "0.1em",
+          textTransform: "uppercase", color: C.inkLt, marginBottom: 8,
+        }}>
           Document Seed
         </p>
-        <div
-          style={{
-            background: "#1E1A14",
-            borderRadius: 12,
-            padding: "14px 18px",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-          }}
-        >
+        <div style={{
+          background: "#1E1A14", borderRadius: 12, padding: "14px 18px",
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+        }}>
           <span style={{ fontFamily: "monospace", fontSize: 13, color: "#9E9278" }}>
             seed: <span style={{ color: "#7CC4B0", fontWeight: 600 }}>{seed}</span>
           </span>
@@ -356,37 +349,23 @@ export default function Step4({ selected, templateChars = [], extractedGlyphs = 
         </div>
       </div>
 
-      <p
-        style={{
-          fontSize: 10,
-          fontWeight: 500,
-          letterSpacing: "0.1em",
-          textTransform: "uppercase",
-          color: C.inkLt,
-          marginBottom: 12,
-        }}
-      >
+      {/* ── DNA Parameters ── */}
+      <p style={{
+        fontSize: 10, fontWeight: 500, letterSpacing: "0.1em",
+        textTransform: "uppercase", color: C.inkLt, marginBottom: 12,
+      }}>
         DNA Parameters
       </p>
       <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 24 }}>
         {DNA_PARAMS.map(p => (
-          <div
-            key={p.name}
-            style={{
-              background: C.bgCard,
-              border: `1px solid ${C.border}`,
-              borderRadius: 12,
-              padding: "14px 18px",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "baseline",
-                justifyContent: "space-between",
-                marginBottom: 10,
-              }}
-            >
+          <div key={p.name} style={{
+            background: C.bgCard, border: `1px solid ${C.border}`,
+            borderRadius: 12, padding: "14px 18px",
+          }}>
+            <div style={{
+              display: "flex", alignItems: "baseline",
+              justifyContent: "space-between", marginBottom: 10,
+            }}>
               <p style={{ fontSize: 13, fontWeight: 500, color: C.ink }}>{p.name}</p>
               <p style={{ fontSize: 10, color: C.inkLt, fontFamily: "monospace" }}>{p.dist}</p>
             </div>
@@ -401,25 +380,20 @@ export default function Step4({ selected, templateChars = [], extractedGlyphs = 
         ))}
       </div>
 
+      {/* ── Stats ── */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
         {[
-          { l: "Thai layers", v: "4", u: "layers", s: "P1 offset table" },
+          { l: "Thai layers",    v: "4", u: "layers",   s: "P1 offset table" },
           { l: "Glyph variants", v: "3", u: "versions", s: "ver 1 / ver 2 / ver 3" },
-          { l: "Source", v: hasFileSource ? "FILE" : "MOCK", u: "", s: hasFileSource ? "from Step 3" : "no file-derived glyph" },
+          { l: "Source", v: hasFileSource ? "FILE" : "MOCK", u: "",
+            s: hasFileSource ? "from Step 3" : "no file-derived glyph" },
         ].map(s => (
-          <div
-            key={s.l}
-            style={{
-              background: C.bgCard,
-              border: `1px solid ${C.border}`,
-              borderRadius: 12,
-              padding: "14px 12px",
-              textAlign: "center",
-            }}
-          >
+          <div key={s.l} style={{
+            background: C.bgCard, border: `1px solid ${C.border}`,
+            borderRadius: 12, padding: "14px 12px", textAlign: "center",
+          }}>
             <p style={{ fontFamily: "'DM Serif Display', serif", fontSize: 24, fontWeight: 400, color: C.ink }}>
-              {s.v}
-              <span style={{ fontSize: 12, color: C.inkLt, marginLeft: 2 }}>{s.u}</span>
+              {s.v}<span style={{ fontSize: 12, color: C.inkLt, marginLeft: 2 }}>{s.u}</span>
             </p>
             <p style={{ fontSize: 10, color: C.inkMd, marginTop: 4 }}>{s.l}</p>
             <p style={{ fontSize: 9, color: C.inkLt, marginTop: 2 }}>{s.s}</p>
