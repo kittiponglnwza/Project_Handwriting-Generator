@@ -101,6 +101,10 @@ export default function Step5Toolbar({
   showVersionDebug,
   setShowVersionDebug,
   setDnaNonce,
+  overlapFactor,
+  setOverlapFactor,
+  slotWRatio,
+  setSlotWRatio,
   LINE_PRESETS,
   ALIGN_OPTS,
   WEIGHT_OPTS,
@@ -301,6 +305,39 @@ export default function Step5Toolbar({
           </label>
         </RibbonGroup>
 
+        <RibbonGroup label="ระยะห่างตัวอักษร">
+          <label style={{ fontSize: 11, display: "flex", alignItems: "center", gap: 4 }}>
+            ชิด←→ห่าง
+            <input
+              type="range"
+              min={0}
+              max={0.55}
+              step={0.01}
+              value={overlapFactor}
+              onChange={e => setOverlapFactor(Number(e.target.value))}
+              style={{ width: 80, accentColor: "#0078d4" }}
+            />
+            <span style={{ minWidth: 28, fontVariantNumeric: "tabular-nums" }}>
+              {Math.round(overlapFactor * 100)}%
+            </span>
+          </label>
+          <label style={{ fontSize: 11, display: "flex", alignItems: "center", gap: 4 }}>
+            กว้าง←→แคบ
+            <input
+              type="range"
+              min={0.35}
+              max={0.90}
+              step={0.01}
+              value={slotWRatio}
+              onChange={e => setSlotWRatio(Number(e.target.value))}
+              style={{ width: 80, accentColor: "#0078d4" }}
+            />
+            <span style={{ minWidth: 28, fontVariantNumeric: "tabular-nums" }}>
+              {Math.round(slotWRatio * 100)}%
+            </span>
+          </label>
+        </RibbonGroup>
+
         <RibbonGroup label="ส่งออก">
           <button
             type="button"
@@ -342,4 +379,3 @@ export default function Step5Toolbar({
     </div>
   )
 }
-

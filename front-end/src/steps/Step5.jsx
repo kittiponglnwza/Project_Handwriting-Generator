@@ -33,6 +33,7 @@ function GlyphSlot({
   viewBox,
   fontSize,
   strokeWMul = 1,
+  overlapFactor,
 }) {
   const hasSvg =
     glyph &&
@@ -47,7 +48,7 @@ function GlyphSlot({
   const sw = penStrokeWidth(fontSize, strokeWMul)
   // Overlap เพื่อให้คำ/ตัวทับกันได้แบบงานพิมพ์
   const overlapPx = Math.min(
-    Math.max(0, Math.round(slotW * OVERLAP_FACTOR)),
+    Math.max(0, Math.round(slotW * (overlapFactor ?? DEFAULT_OVERLAP_FACTOR))),
     Math.max(0, slotW - 1)
   )
 
@@ -160,11 +161,14 @@ const GLYPH_SPACE_W_RATIO = 0.26
 // Overlap (ทับ) ระหว่างตัว เพื่อให้ “เป็นคำ” อ่านง่าย
 // ยิ่งค่านี้สูง ยิ่งชิด/ยิ่งทับมาก (แต่ไม่กระทบขนาด glyph โดยตรง)
 const OVERLAP_FACTOR = 0.22
+const DEFAULT_OVERLAP_FACTOR = OVERLAP_FACTOR
+const DEFAULT_SLOT_W_RATIO = GLYPH_SLOT_W_RATIO
 
-function glyphMetrics(fontSize) {
+function glyphMetrics(fontSize, slotWRatio) {
   const fs = Number(fontSize) || 32
+  const swr = Number(slotWRatio) || GLYPH_SLOT_W_RATIO
   return {
-    slotW: Math.max(12, Math.round(fs * GLYPH_SLOT_W_RATIO)),
+    slotW: Math.max(12, Math.round(fs * swr)),
     slotH: Math.max(20, Math.round(fs * GLYPH_SLOT_H_RATIO)),
     spaceW: Math.max(3, Math.round(fs * GLYPH_SPACE_W_RATIO)),
   }
@@ -218,6 +222,8 @@ export default function Step5({
 
   // Export shift (แกน X) - ใช้ปรับตำแหน่งตอนส่งออกโดยไม่กระทบ preview layout มาก
   const [outputOffsetX, setOutputOffsetX] = useState(64)
+  const [overlapFactor, setOverlapFactor] = useState(DEFAULT_OVERLAP_FACTOR)
+  const [slotWRatio, setSlotWRatio] = useState(DEFAULT_SLOT_W_RATIO)
 
   const TEXT_COLORS = ["#2C2416", "#1a3a5c", "#2e6b3e", "#8b3a2a", "#5c3d7a", "#605e5c"]
   const HL_COLORS = ["", "#fff9c4", "#c8f7c5", "#d4e6ff", "#ffe0cc", "#f5d0f5"]
@@ -263,10 +269,10 @@ export default function Step5({
         fontSize,
         textColor,
         hlColor,
-        slotWRatio: GLYPH_SLOT_W_RATIO,
+        slotWRatio: slotWRatio,
         slotHRatio: GLYPH_SLOT_H_RATIO,
         spaceWRatio: GLYPH_SPACE_W_RATIO,
-        overlapFactor: OVERLAP_FACTOR,
+        overlapFactor: overlapFactor,
       }),
     [tokens, fontSize, textColor, hlColor]
   )
@@ -378,12 +384,12 @@ body {
     const resolvedGlyph = chGlyphs.length > 0 && wordVerIdx != null
       ? chGlyphs[wordVerIdx % chGlyphs.length]
       : ct.glyph
-    const { slotW, slotH } = glyphMetrics(fontSize)
+    const { slotW, slotH } = glyphMetrics(fontSize, slotWRatio)
     const tx = t.shiftX ?? 0
     const ty = t.shiftYMicro ?? 0
     const mr = t.microRotate ?? 0
     const overlapPx = Math.min(
-      Math.max(0, Math.round(slotW * OVERLAP_FACTOR)),
+      Math.max(0, Math.round(slotW * overlapFactor)),
       Math.max(0, slotW - 1)
     )
 
@@ -410,6 +416,7 @@ body {
           viewBox="0 0 100 100"
           fontSize={fontSize}
           strokeWMul={t.strokeWMul ?? 1}
+          overlapFactor={overlapFactor}
         />
         {showVersionDebug && ct.pickedVersion != null && (
           <span
@@ -435,7 +442,10 @@ body {
   }
 
   const renderToken = token => {
-    if (token.type === "newline")
+    if (token.type === "newline") {
+      // แปลง lineHeight → ระยะห่างจริง โดยใช้ slotH เป็น base
+      const { slotH } = glyphMetrics(fontSize, slotWRatio)
+      const rowGap = Math.round(slotH * (lineHeight - 1)) + paraSpacing
       return (
         <span
           key={token.id}
@@ -443,13 +453,14 @@ body {
             display: "block",
             width: "100%",
             height: 0,
-            marginBottom: paraSpacing,
+            marginBottom: rowGap,
           }}
         />
       )
+    }
 
     if (token.type === "space") {
-      const { spaceW, slotH } = glyphMetrics(fontSize)
+      const { spaceW, slotH } = glyphMetrics(fontSize, slotWRatio)
       return (
         <span
           key={token.id}
@@ -533,6 +544,10 @@ body {
         showVersionDebug={showVersionDebug}
         setShowVersionDebug={setShowVersionDebug}
         setDnaNonce={setDnaNonce}
+        overlapFactor={overlapFactor}
+        setOverlapFactor={setOverlapFactor}
+        slotWRatio={slotWRatio}
+        setSlotWRatio={setSlotWRatio}
         LINE_PRESETS={LINE_PRESETS}
         ALIGN_OPTS={ALIGN_OPTS}
         WEIGHT_OPTS={WEIGHT_OPTS}
