@@ -175,10 +175,10 @@ function glyphMetrics(fontSize, slotWRatio) {
 }
 
 const LINE_PRESETS = [
+  { label: "0", value: 0 },
+  { label: "0.3", value: 0.3 },
+  { label: "0.5", value: 0.5 },
   { label: "1.0", value: 1.0 },
-  { label: "1.08", value: 1.08 },
-  { label: "1.2", value: 1.2 },
-  { label: "1.5", value: 1.5 },
   { label: "2.0", value: 2.0 },
 ]
 
@@ -207,7 +207,7 @@ export default function Step5({
   const [editNonce, setEditNonce] = useState(0)
   const [dnaNonce, setDnaNonce] = useState(0)
   const [fontSize, setFontSize] = useState(48)
-  const [lineHeight, setLineHeight] = useState(1.15)
+  const [lineHeight, setLineHeight] = useState(0.3)
   const [alignment, setAlignment] = useState("left")
   const [fontWeight, setFontWeight] = useState("normal")
   const [paraSpacing, setParaSpacing] = useState(2)
@@ -443,17 +443,16 @@ body {
 
   const renderToken = token => {
     if (token.type === "newline") {
-      // แปลง lineHeight → ระยะห่างจริง โดยใช้ slotH เป็น base
-      const { slotH } = glyphMetrics(fontSize, slotWRatio)
-      const rowGap = Math.round(slotH * (lineHeight - 1)) + paraSpacing
+      // lineHeight คุม gap ระหว่างบรรทัดโดยตรงเป็น px (0 = ชิดสนิท)
+      const rowGap = Math.max(0, Math.round(lineHeight * fontSize) + paraSpacing)
       return (
         <span
           key={token.id}
           style={{
             display: "block",
             width: "100%",
-            height: 0,
-            marginBottom: rowGap,
+            height: rowGap,
+            marginBottom: 0,
           }}
         />
       )

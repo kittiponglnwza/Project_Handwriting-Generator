@@ -230,24 +230,34 @@ export default function Step5Toolbar({
               fontSize: 11,
               display: "flex",
               alignItems: "center",
-              gap: 6,
-              padding: "0 6px",
+              gap: 4,
+              padding: "0 4px",
               marginTop: 2,
             }}
-            title="กำหนดระยะบรรทัดเอง"
+            title="ปรับระยะห่างระหว่างบรรทัดอิสระ"
           >
-            <span style={{ color: "#605e5c", whiteSpace: "nowrap" }}>Custom</span>
+            <input
+              type="range"
+              min={0}
+              max={5}
+              step={0.05}
+              value={lineHeight}
+              onChange={e => setLineHeight(Number(e.target.value))}
+              style={{ width: 90, accentColor: "#0078d4" }}
+            />
             <input
               type="number"
-              min={0.7}
-              max={3}
-              step={0.01}
+              min={0}
+              step={0.05}
               value={lineHeight}
-              onChange={e => setLineHeight(Math.max(0.7, Math.min(3, Number(e.target.value) || 1)))}
+              onChange={e => {
+                const v = Number(e.target.value)
+                if (!isNaN(v) && v >= 0) setLineHeight(v)
+              }}
               style={{
-                width: 78,
+                width: 56,
                 height: 24,
-                padding: "0 6px",
+                padding: "0 4px",
                 fontSize: 12,
                 borderRadius: 4,
                 border: "1px solid #d2d0ce",
@@ -255,7 +265,7 @@ export default function Step5Toolbar({
               }}
               aria-label="Custom line height"
             />
-            <span style={{ color: "#605e5c" }}>x</span>
+            <span style={{ color: "#605e5c" }}>×</span>
           </label>
           {ALIGN_OPTS.map(a => (
             <RibbonBtn
