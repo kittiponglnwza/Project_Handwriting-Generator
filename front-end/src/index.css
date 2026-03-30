@@ -1,3 +1,1 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* App styles: global reset + typography live in App.jsx (FontLoader). Tailwind was removed — it was not configured in package.json and caused LightningCSS "Unknown @tailwind" warnings on build. */

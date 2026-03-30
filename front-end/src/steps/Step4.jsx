@@ -1,5 +1,7 @@
-﻿import { useMemo, useState, useEffect } from "react"
+import { useMemo, useState } from "react"
 import Btn from "../components/Btn"
+import { DOCUMENT_SEED } from "../lib/documentSeed.js"
+import { buildVersionedGlyphs, deformPath } from "../lib/glyphVersions.js"
 import C from "../styles/colors"
 
 const DNA_PARAMS = [
@@ -9,7 +11,7 @@ const DNA_PARAMS = [
   { name: "Scale variation", dist: "Normal • σ = 0.03", value: 38 },
 ]
 
-const SEEDS = ["0x7f3a2c91", "0x3b9e12f4", "0xa1c8e302", "0x55d0f7ab"]
+const SEEDS = ["0x7f3a2c91", DOCUMENT_SEED, "0xa1c8e302", "0x55d0f7ab"]
 
 function hashString(input) {
   let hash = 2166136261
@@ -48,74 +50,13 @@ function buildVariant(char, seed, version) {
   }
 }
 
-// ─── Canonical path deformation — shared with Step5 via import ────────────────
-// version 1 = original, 2 = drooping tail, 3 = wavy/imperfect
-export function deformPath(svgPath, version) {
-  if (!svgPath || version === 1) return svgPath
-
-  return svgPath.replace(
-    /([ML])\s+([-]?[\d.]+)\s+([-]?[\d.]+)/g,
-    (match, cmd, xStr, yStr) => {
-      try {
-        let x = parseFloat(xStr)
-        let y = parseFloat(yStr)
-        if (isNaN(x) || isNaN(y)) return match
-
-        if (version === 2) {
-          const drop = (y / 100) * 5
-          y += drop
-          x -= (y / 100) * 1.5
-        } else if (version === 3) {
-          x += Math.sin(y * 0.15) * 1.5
-          y += Math.cos(x * 0.15) * 1.5
-        }
-        return `${cmd} ${x.toFixed(1)} ${y.toFixed(1)}`
-      } catch {
-        return match
-      }
-    }
-  )
-}
-
-// ─── Produce flat versioned-glyph array for Step5 ────────────────────────────
-// Each source glyph → 3 entries (version 1, 2, 3) with deformed svgPath.
-// Step5 maps ch → [all versions] and picks one per character slot via RNG.
-export function buildVersionedGlyphs(extractedGlyphs) {
-  const result = []
-  for (const g of extractedGlyphs) {
-    const hasSvg =
-      typeof g.svgPath === "string" &&
-      g.svgPath.trim() !== "" &&
-      g.svgPath.trim() !== "M 0 0"
-
-    for (const ver of [1, 2, 3]) {
-      result.push({
-        ...g,
-        id: `${g.id}-v${ver}`,
-        version: ver,
-        svgPath: hasSvg ? deformPath(g.svgPath, ver) : (g.svgPath || ""),
-        // PNG preview stays the same — visual variety relies on SVG deformation.
-        // Step5 renders SVG when available; PNG is the fallback.
-        preview:    g.preview    || "",
-        previewInk: g.previewInk || "",
-        verLabel:
-          ver === 1 ? "Ver 1: ต้นฉบับ" :
-          ver === 2 ? "Ver 2: หางตก"   :
-                     "Ver 3: เส้นแกว่ง",
-      })
-    }
-  }
-  return result
-}
-
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function Step4({
   selected,
   templateChars = [],
   extractedGlyphs = [],
-  onGlyphsReady,          // (versionedGlyphs: GlyphEntry[]) => void
 }) {
-  const seed = SEEDS[1]
+  const seed = DOCUMENT_SEED
   const sourceChars = useMemo(
     () => (templateChars.length > 0 ? templateChars : [...selected]),
     [selected, templateChars]
@@ -149,12 +90,6 @@ export default function Step4({
     [extractedGlyphs]
   )
 
-  useEffect(() => {
-    if (typeof onGlyphsReady === "function") {
-      onGlyphsReady(versionedGlyphs)
-    }
-  }, [versionedGlyphs, onGlyphsReady])
-
   const handleRandom = () => {
     if (hasFileSource) {
       const idx = Math.floor(Math.random() * extractedGlyphs.length)
@@ -165,10 +100,6 @@ export default function Step4({
     if (sourceChars.length === 0) return
     setPickedChar(sourceChars[Math.floor(Math.random() * sourceChars.length)])
   }
-
-  console.log("📦 ข้อมูลทั้งหมดที่ส่งมาจาก Step 3:", extractedGlyphs)
-  console.log("🎯 ตัวอักษรที่กำลังเลือกอยู่:", activeFileGlyph)
-  console.log("🔀 Versioned glyphs ที่ส่งให้ Step 5:", versionedGlyphs.length, "entries")
 
   return (
     <div className="fade-up">

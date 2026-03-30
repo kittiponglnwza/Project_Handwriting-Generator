@@ -1,9 +1,10 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import Btn from "./components/Btn"
 import Step1 from "./steps/Step1"
 import Step2 from "./steps/Step2"
 import Step3 from "./steps/Step3"
-import Step4 from "./steps/Step4"
+import Step4 from "./steps/Step4.jsx"
+import { buildVersionedGlyphs } from "./lib/glyphVersions.js"
 import Step5 from "./steps/Step5"
 import C from "./styles/colors"
 
@@ -44,6 +45,11 @@ export default function App() {
   const [uploadedPdf, setUploadedPdf] = useState(null)
   const [templateChars, setTemplateChars] = useState([])
   const [analyzedGlyphs, setAnalyzedGlyphs] = useState([])
+  const [versionedGlyphs, setVersionedGlyphs] = useState([])
+
+  useEffect(() => {
+    setVersionedGlyphs(buildVersionedGlyphs(analyzedGlyphs))
+  }, [analyzedGlyphs])
 
   const toggle = ch =>
     setSelected(prev => {
@@ -82,6 +88,7 @@ export default function App() {
     setUploadedPdf(null)
     setUploaded(false)
     setAnalyzedGlyphs([])
+    setVersionedGlyphs([])
   }
 
   const escapeHtml = text =>
@@ -91,8 +98,6 @@ export default function App() {
       .replaceAll(">", "&gt;")
       .replaceAll('"', "&quot;")
       .replaceAll("'", "&#039;")
-
-  const toCellCode = index => `HG${String(index + 1).padStart(3, "0")}`
 
   // QR payload: base64url UTF-8 JSON array — one string per cell on this page (order = left→right, top→bottom)
   const encodeHgQrCharsPayload = charsOnPage => {
@@ -152,7 +157,6 @@ export default function App() {
     const ROWS_PER_PAGE = 6
     const CELLS_PER_PAGE = COLUMNS_PER_ROW * ROWS_PER_PAGE
     const pageCount = Math.ceil(chars.length / CELLS_PER_PAGE)
-    const now = new Date().toLocaleString("th-TH")
 
     const makeCell = (ch, index) => `
       <div class="cell">
@@ -431,7 +435,14 @@ export default function App() {
       />
     ),
     4: <Step4 selected={selected} templateChars={templateChars} extractedGlyphs={analyzedGlyphs} />,
-    5: <Step5 selected={selected} templateChars={templateChars} extractedGlyphs={analyzedGlyphs} />,
+    5: (
+      <Step5
+        selected={selected}
+        templateChars={templateChars}
+        extractedGlyphs={analyzedGlyphs}
+        versionedGlyphs={versionedGlyphs}
+      />
+    ),
   }
   const nextLabel = {
     1: selected.size > 0 ? "Generate Template →" : "ถัดไป →",
@@ -603,7 +614,14 @@ export default function App() {
             </div>
           </header>
 
-          <main style={{ flex: 1, overflowY: "auto", padding: "28px 32px", background: C.bg }}>
+          <main
+            style={{
+              flex: 1,
+              overflowY: "auto",
+              padding: step === 5 ? 0 : "28px 32px",
+              background: step === 5 ? "#E7E6E6" : C.bg,
+            }}
+          >
             {content[step]}
           </main>
 
