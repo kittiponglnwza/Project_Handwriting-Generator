@@ -236,59 +236,29 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
     }
 
     let cursor = 0, pagesUsed = 0, maxCells = 0
-    const allGlyphs  = []
-    const usedIndices = new Set()
-
-    // Track segment offset for multi-segment PDFs.
-    // pageMeta.cellFrom restarts at 1 for each segment, but chars[] is a flat array.
-    // segmentOffset accumulates total cells consumed by previous segments.
-    let segmentOffset = 0
-    let prevTotalPages = null
-    let prevSegmentEnd = 0  // last absolute index used in previous segment
+    const allGlyphs = []
 
     for (const page of source.pages) {
       if (cursor >= chars.length) break
 
-      // Detect segment boundary: totalPages resets (new segment from Step1 multi-group print)
-      const curTotalPages = page.pageMeta?.totalPages ?? null
-      if (prevTotalPages !== null && curTotalPages !== null && curTotalPages !== prevTotalPages) {
-        // New segment — segmentOffset advances to where the previous segment ended
-        segmentOffset = prevSegmentEnd
-      }
-      if (curTotalPages !== null) prevTotalPages = curTotalPages
-
-      // Use per-page autoCalibration (computed by buildAutoPageProfiles) as base,
-      // then layer the user's manual offset adjustments on top.
-      // This is the key fix: TEMPLATE_CALIBRATION is a generic fallback, but
-      // autoCalibration is fitted to THIS specific page's actual anchor positions.
       const baseCalibration = page.autoCalibration ?? TEMPLATE_CALIBRATION
       const pageCalibration = mergeCalibration(baseCalibration, calibration)
 
-      // cellFrom is 1-based within its segment; add segmentOffset for flat chars[]
-      const startIndex = page.pageMeta?.cellFrom > 0
-        ? segmentOffset + page.pageMeta.cellFrom - 1
-        : cursor
-
+      // ใช้ cursor เป็น startIndex เสมอ — cellFrom จาก QR ใช้แค่ตรวจสอบว่าตรงกันไหม
+      const startIndex = cursor
       const remainingChars = chars.length - startIndex
 
       let pageMaxCells
       // DEBUG: log pageMeta per page
-      console.log(`[PAGE_DEBUG] page=${page.pageNumber} pageMeta=`, JSON.stringify(page.pageMeta), `cursor=${cursor} remainingChars=${chars.length - startIndex}`)
+      console.log(`[PAGE_DEBUG] page=${page.pageNumber} pageMeta=`, JSON.stringify(page.pageMeta), `cursor=${cursor} remainingChars=${remainingChars}`)
       if (page.pageMeta?.cellCount > 0) {
-        // pageMeta.cellCount is the authoritative count from QR/HGMETA — always trust it
         pageMaxCells = Math.min(page.pageMeta.cellCount, remainingChars)
       } else {
-        // No reliable metadata — estimate from grid geometry
         const geometry = getGridGeometry(
           page.pageWidth, page.pageHeight,
-          // Use actual remaining count (not capped at 24) so startY is computed correctly
-          // for pages with more than 24 cells; clamp at GRID_COLS*6 to avoid layout blowout
           Math.min(remainingChars, GRID_COLS * 6), pageCalibration
         )
         pageMaxCells = getPageCapacity(page.pageHeight, geometry.startY, geometry.cellHeight, geometry.gap)
-        // Only trust anchorCapacity as an upper bound if the count is derived from
-        // CONTIGUOUS index anchors (reliable). Raw page.anchors.length is always
-        // equal to anchor count which may be far fewer than actual cell count.
         if (page.contiguousCount >= MIN_TRUSTED_INDEX_TARGETS)
           pageMaxCells = Math.min(pageMaxCells, page.contiguousCount)
         pageMaxCells = Math.min(pageMaxCells, remainingChars)
@@ -296,7 +266,7 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
       pageMaxCells = Math.min(pageMaxCells, GRID_COLS * 6)
       if (pageMaxCells <= 0) continue
 
-      const pageCellFrom = page.pageMeta?.cellFrom > 0 ? page.pageMeta.cellFrom : startIndex + 1
+      const pageCellFrom = startIndex + 1
       const hasGridLines = (page.regDots?.length ?? 0) >= 4
       let pageCellRects = hasGridLines
         ? buildOrderedCellRectsForPage(page, pageCellFrom, pageMaxCells)
@@ -327,12 +297,9 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
       }))
 
       for (const glyph of pageGlyphs) {
-        if (usedIndices.has(glyph.index)) continue
-        usedIndices.add(glyph.index)
         allGlyphs.push(glyph)
       }
-      cursor = Math.max(cursor, startIndex + pageChars.length)
-      prevSegmentEnd = cursor  // track absolute end for next segment boundary
+      cursor = startIndex + pageChars.length
       pagesUsed += 1
       maxCells  += pageMaxCells
     }
