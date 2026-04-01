@@ -16,34 +16,37 @@ export const MIN_TRUSTED_INDEX_TARGETS = 6
 export const HGCHAR_RE = /^HGCHAR:(\d+)=(.*)$/
 
 // STEP 1 — SINGLE SOURCE OF TRUTH FOR GRID GEOMETRY
-// Exact values from Step1 CSS template
 export const GRID_GEOMETRY = {
   // A4 page at PDF.js scale=3
-  pageWidthPx: 1785,     // 210mm × 3
-  pageHeightPx: 2526,    // 297mm × 3
-  
-  // CSS Grid exact values
-  marginPx: 119,          // 14mm × 3
-  headerPx: 169,          // ~20mm × 3
-  cellWidthPx: 260,      // Dynamic from available width
-  cellHeightPx: 339,     // 28.5mm × 3 (FIXED from CSS)
-  gapPx: 21,             // 7px × 3
-  
-  // Calculated positions
-  startX: 119,           // marginPx
-  startY: 289,           // marginPx + headerPx
-  
-  // Fixed inset ratio (2% instead of 6%)
-  insetRatio: 0.02,
+  pageWidthPx:  1785,
+  pageHeightPx: 2526,
+
+  // ปรับ Margin เข้ามาอีกนิด เพื่อให้ตรงกับระยะ Print จริงมากขึ้น
+  marginPx: 125,
+
+  // ความสูง Header
+  headerPx: 260,
+
+  // 💡 ทำให้กรอบ "เล็กลงกระชับขึ้น" (ลด Width/Height แต่ไปเพิ่ม Gap แทนเพื่อรักษาศูนย์กลาง)
+  cellWidthPx:  235,    // ทรงสี่เหลี่ยมจัตุรัสที่พอดีช่อง
+  cellHeightPx: 235,    
+  gapPx: 25,            // เพิ่ม gap เพื่อรักษาระยะห่างศูนย์กลางให้เป๊ะ
+
+  // จุดเริ่มต้น
+  startX: 125,          // ขยับซ้ายเข้ามานิดนึงให้กรอบตรงเป๊ะ
+  startY: 385,          // ขยับลงมาให้พ้นเส้นขอบหัวตาราง
+
+  // 💡 เพิ่ม Inset เป็น 4% เพื่อให้ Crop Zone (เส้นสีฟ้า) กินลึกเข้าไปอีก ตัดขอบดำทิ้งได้ชัวร์ขึ้น
+  insetRatio: 0.04,
 }
 
-// GRID_CONFIG — legacy, kept for compatibility
+// อัปเดต GRID_CONFIG ให้สัมพันธ์กับตัวเลขด้านบน
 export const GRID_CONFIG = {
-  padXRatio:   0.0667,
-  topRatio:    0.1144,
+  padXRatio:   0.07,    // (125 / 1785)
+  topRatio:    0.1524,  // (385 / 2526)
   bottomRatio: 0.073,
-  gapRatio:    0.01176,
-  insetRatio:  0.02,  // FIXED: reduced from 0.06 to 0.02
+  gapRatio:    0.014,   // (25 / 1785)
+  insetRatio:  0.04,    // อัปเดตให้ตรงกับข้างบน
 }
 
 // Zero offset — GRID_CONFIG is now accurately matched to Step1 CSS layout.

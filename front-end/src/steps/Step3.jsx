@@ -32,7 +32,7 @@ import {
 } from "../lib/step3/constants.js"
 import { buildOrderedCellRectsForPage } from "../lib/step3/regDots.js"
 import { mergeCalibration } from "../lib/step3/utils.js"
-import { Adjuster, GridDebugOverlay } from "./step3/Step3Panels.jsx"
+import { Adjuster, GridDebugOverlay, PageDebugOverlay } from "./step3/Step3Panels.jsx"
 import DebugOverlay from "../components/DebugOverlay.jsx"
 
 // NEW: Engine imports
@@ -528,20 +528,14 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
         </div>
       )}
 
-      {showOverlay && pageRef.current?.pages?.[0] && (
+      {showOverlay && pageRef.current?.pages?.length > 0 && (
         <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 14, padding: 14, marginBottom: 14 }}>
-          <p style={{ fontSize: 11, color: C.inkLt, marginBottom: 10 }}>
-            Debug Overlay: Engine State & Metrics
-          </p>
-          <div style={{ position: "relative", width: "100%", height: 400, background: "#f0f0f0" }}>
-            <div style={{ position: "absolute", top: 10, left: 10, background: "rgba(255,255,255,0.9)", padding: 10, borderRadius: 8 }}>
-              <h4>State: {pipelineState}</h4>
-              <p>Glyphs: {summary.total}</p>
-              <p>OK: {summary.ok}</p>
-              <p>Missing: {summary.missing}</p>
-              <p>Overflow: {summary.overflow}</p>
-            </div>
-          </div>
+          <PageDebugOverlay
+            pages={pageRef.current.pages}
+            calibration={calibration}
+            chars={chars}
+            getGridGeometry={getGridGeometry}
+          />
         </div>
       )}
 
