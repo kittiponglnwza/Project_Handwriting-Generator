@@ -5,6 +5,7 @@ import { PerformanceGovernor } from '../../engine/PerformanceGovernor.js'
 import { extractGlyphsFromCanvas } from '../../core/rendering/GlyphExtractor.js'
 import { traceAllGlyphs } from '../../core/rendering/SvgTracer.js'
 import { GeometryService } from '../../core/geometry/GeometryService.js'
+import { PipelineStates } from '../../engine/PipelineStateMachine.js'  // แก้ Bug #4
 
 export class Step3Controller {
   static async executeGlyphExtraction(pageData, calibration) {
@@ -17,14 +18,12 @@ export class Step3Controller {
         ctx: pageData.ctx
       }
 
-      // Create glyph jobs for batch processing
       const glyphJobs = pageData.chars.map((ch, i) => ({
         index: i,
         character: ch,
         params: { ...params, charIndex: i }
       }))
 
-      // Process through performance governor
       const results = await PerformanceGovernor.batchProcessor.add(
         glyphJobs,
         this.processGlyphBatch.bind(this)
@@ -40,7 +39,6 @@ export class Step3Controller {
   }
 
   static async processGlyphBatch(batch) {
-    // Process batch with frame budget awareness
     return batch.map(job => {
       return Telemetry.measure('glyph.batch', () => {
         return this.extractSingleGlyph(job.params)
@@ -52,45 +50,40 @@ export class Step3Controller {
     const geometry = GeometryService.getGridGeometry(params.calibration)
     const cellPosition = GeometryService.calculateCellPosition(params.charIndex, 6, geometry)
     const cropRect = GeometryService.calculateCropRectangle(cellPosition)
-    
-    // Use existing extractGlyphsFromCanvas logic for single glyph
+
     return extractGlyphsFromCanvas({
       ...params,
       chars: [params.character]
     })[0]
   }
 
-  static async executeFullPipeline(pageData, calibration) {
-    const stateMachine = window.__stateMachine
+  // แก้ Bug #2 — รับ stateMachine เป็น parameter แทน window.__stateMachine
+  static async executeFullPipeline(pageData, calibration, stateMachine) {
     if (!stateMachine) {
-      throw new Error('State machine not initialized')
+      throw new Error('stateMachine is required — pass it as the third argument to executeFullPipeline()')
     }
 
     try {
-      // Step 1: Calibration
       stateMachine.transition(PipelineStates.CALIBRATING, { pageCount: pageData.pages?.length || 1 })
-      
-      // Step 2: Extraction
+
       stateMachine.transition(PipelineStates.EXTRACTING, { glyphCount: pageData.chars.length })
       const extractionResult = await this.executeGlyphExtraction(pageData, calibration)
-      
-      // Step 3: SVG Tracing
-      stateMachine.transition(PipelineStates.TRACING, { 
+
+      stateMachine.transition(PipelineStates.TRACING, {
         glyphCount: extractionResult.glyphs.length,
         extractedCount: extractionResult.glyphs.filter(g => g.status !== 'missing').length
       })
-      
+
       const tracedGlyphs = await Telemetry.measureAsync('svg.trace', async () => {
         return await traceAllGlyphs(extractionResult.glyphs)
       }, { glyphCount: extractionResult.glyphs.length })
-      
-      // Step 4: Complete
-      stateMachine.transition(PipelineStates.DONE, { 
+
+      stateMachine.transition(PipelineStates.DONE, {
         totalGlyphs: tracedGlyphs.length,
         okGlyphs: tracedGlyphs.filter(g => g.status === 'ok').length,
         overflowGlyphs: tracedGlyphs.filter(g => g.status === 'overflow').length
       })
-      
+
       return tracedGlyphs
     } catch (error) {
       stateMachine.transition(PipelineStates.ERROR, { error: error.message })

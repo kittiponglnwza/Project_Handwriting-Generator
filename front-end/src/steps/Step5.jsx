@@ -153,7 +153,7 @@ function glyphMetrics(fontSize, slotWRatio) {
   }
 }
 
-const LINE_PRESETS = [{ label:"0",value:0 },{ label:"0.3",value:0.3 },{ label:"0.5",value:0.5 },{ label:"1.0",value:1.0 },{ label:"2.0",value:2.0 }]
+const LINE_PRESETS = [{ label:"0.5",value:0.5 },{ label:"1.0",value:1.0 },{ label:"1.5",value:1.5 },{ label:"1.8",value:1.8 },{ label:"2.5",value:2.5 }]
 const ALIGN_OPTS   = [{ id:"left",icon:"⇤",title:"จัดซ้าย" },{ id:"center",icon:"↔",title:"กึ่งกลาง" },{ id:"right",icon:"⇥",title:"จัดขวา" },{ id:"justify",icon:"⇔",title:"เต็มบรรทัด" }]
 const WEIGHT_OPTS  = ["light","normal","bold"]
 const FONT_SIZES   = [24,28,32,36,42,48,56,64]
@@ -171,7 +171,7 @@ export default function Step5({ versionedGlyphs = [], extractedGlyphs = [] }) {
   const [editNonce,      setEditNonce]      = useState(0)
   const [dnaNonce,       setDnaNonce]       = useState(0)
   const [fontSize,       setFontSize]       = useState(48)
-  const [lineHeight,     setLineHeight]     = useState(0.3)
+  const [lineHeight,     setLineHeight]     = useState(1.8)
   const [alignment,      setAlignment]      = useState("left")
   const [fontWeight,     setFontWeight]     = useState("normal")
   const [paraSpacing,    setParaSpacing]    = useState(2)

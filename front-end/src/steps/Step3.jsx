@@ -93,9 +93,6 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
     stateMachineRef.current = stateMachine
     workerAdapterRef.current = workerAdapter
     
-    // Store for global access
-    window.__stateMachine = stateMachine
-    window.__workerAdapter = workerAdapter
     
     return () => {
       unsubscribe()
@@ -155,7 +152,7 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
         pages: pageRef.current.pages
       }
       
-      const result = await Step3Controller.executeFullPipeline(pageData, calibration)
+      const result = await Step3Controller.executeFullPipeline(pageData, calibration, stateMachineRef.current)
       setTracedGlyphs(result)
       onGlyphsUpdate(result)
       
