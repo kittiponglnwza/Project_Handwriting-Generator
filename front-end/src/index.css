@@ -1,1 +1,36 @@
-/* App styles: global reset + typography live in App.jsx (FontLoader). Tailwind was removed — it was not configured in package.json and caused LightningCSS "Unknown @tailwind" warnings on build. */
+@import url("https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&display=swap");
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --step5-bg-soft: radial-gradient(circle at 15% 10%, #ffffff, #f2f5fb 36%, #e8edf5 100%);
+}
+
+.step5-smart {
+  font-family: "Sora", "DM Sans", "Segoe UI", system-ui, sans-serif;
+}
+
+.step5-card {
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.94) 0%, rgba(247, 249, 252, 0.88) 100%);
+}
+
+.step5-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+.step5-scroll::-webkit-scrollbar {
+  width: 10px;
+}
+
+.step5-scroll::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.step5-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}

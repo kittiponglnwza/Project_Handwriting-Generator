@@ -1,107 +1,281 @@
-/**
- * Step5Preview — updated to remove sourceChars dependency.
- * Status bar now shows actual glyph count (data-driven), not Step 1 char selection count.
- *
- * Changed prop:
- *   REMOVED: sourceChars (was templateChars ?? selected — both eliminated)
- *   ADDED:   glyphCount  (extractedGlyphs.length — actual data-driven count)
- */
-export default function Step5Preview({
-  hasFileGlyphs,
-  marginPx,
-  text,
-  setText,
-  setEditNonce,
-  tokens,
-  renderToken,
-  outputOffsetX,
-  fontSize,
-  lineHeight,
-  textColor,
-  alignment,
-  previewZoom,
-  setPreviewZoom,
-  usingVersioned,
-  versionedGlyphs,
-  extractedGlyphs,
-  glyphCount,        // ← replaces sourceChars
-  documentSeed,
-  dnaNonce,
-}) {
+import { useMemo, useRef, useState } from "react"
+
+const ZOOM_MIN = 0.25
+const ZOOM_MAX = 2.8
+
+function clamp(v, min, max) {
+  return Math.min(max, Math.max(min, v))
+}
+
+function PreviewGlyph({ segment, letterSpacing, italicMock, boldMock }) {
+  if (segment.isSpace) {
+    return (
+      <span style={{ whiteSpace: "pre" }}>
+        {segment.text}
+      </span>
+    )
+  }
+
+  const spacing = letterSpacing + segment.spacingJitter
+  const transform = `translateY(${segment.translateY}px) rotate(${segment.rotate}deg)${italicMock ? " skewX(-7deg)" : ""}`
+
   return (
-    <>
-      {/* Ruler */}
-      <div style={{ height:22, background:"linear-gradient(to bottom,#faf9f8,#edebe9)", borderBottom:"1px solid #d2d0ce", display:"flex", alignItems:"flex-end", paddingLeft:Math.min(marginPx,80), paddingRight:Math.min(marginPx,80), flexShrink:0 }}>
-        {Array.from({ length: 24 }, (_, i) => (
-          <div key={i} style={{ flex:1, height:i%5===0?10:5, borderLeft:`1px solid ${i%5===0?"#a19f9d":"#d2d0ce"}` }} />
-        ))}
-      </div>
+    <span
+      className="inline-block origin-bottom align-baseline"
+      style={{
+        transform,
+        marginRight: `${spacing}px`,
+        textShadow: boldMock ? "0.45px 0 0 currentColor, 0.9px 0 0 currentColor" : "none",
+      }}
+    >
+      {segment.text}
+    </span>
+  )
+}
 
-      {!hasFileGlyphs && (
-        <div style={{ margin:"6px 8px 0", background:"#fff4ce", border:"1px solid #f1c40f", borderRadius:4, padding:"6px 10px", fontSize:12, color:"#605e5c" }}>
-          ยังไม่มี glyph จาก Step 3 — จะแสดงเป็นตัวอักษรธรรมดา
-        </div>
-      )}
+function PreviewPaper({ design, previewLines, pageSize }) {
+  const textStyle = useMemo(() => {
+    const textAlign = design.alignment === "justify" ? "justify" : design.alignment
+    return {
+      fontFamily: `"MyHandwriting","TH Sarabun New","Noto Sans Thai",Tahoma,sans-serif`,
+      fontSize: `${design.fontSize}px`,
+      lineHeight: design.lineHeight,
+      color: design.textColor,
+      opacity: design.opacity,
+      textAlign,
+      fontFeatureSettings: `"salt" 1, "calt" 1, "liga" 1`,
+      fontKerning: "normal",
+      WebkitFontSmoothing: "antialiased",
+      textRendering: "optimizeLegibility",
+      wordBreak: "break-word",
+      overflowWrap: "anywhere",
+    }
+  }, [design])
 
-      <div style={{ flex:1, display:"flex", flexDirection:"row", gap:8, padding:"6px 8px 8px", minHeight:0, alignItems:"stretch" }}>
-        {/* Left panel — text input */}
-        <div style={{ flex:"0 1 42%", minWidth:260, maxWidth:480, display:"flex", flexDirection:"column", gap:6 }}>
-          <div style={{ background:"#ffffff", border:"1px solid #d2d0ce", borderRadius:6, boxShadow:"0 1px 3px rgba(0,0,0,.06)", flex:1, display:"flex", flexDirection:"column", minHeight:0 }}>
-            <div style={{ fontSize:11, fontWeight:600, color:"#605e5c", padding:"8px 12px", borderBottom:"1px solid #d2d0ce", background:"#faf9f8", letterSpacing:"0.02em" }}>
-              ข้อความต้นฉบับ
+  return (
+    <div
+      className="relative overflow-hidden rounded-[26px] border border-slate-200 bg-white shadow-[0_18px_55px_rgba(15,23,42,0.22)]"
+      style={{ width: pageSize.width, height: pageSize.height }}
+    >
+      <div style={{ padding: `${design.padding}px`, height: "100%", boxSizing: "border-box" }}>
+        <div style={textStyle}>
+          {previewLines.map((line, lineIndex) => (
+            <div key={`line-${lineIndex}`} className="min-h-[1em]">
+              {line.length === 0 ? (
+                <span>&nbsp;</span>
+              ) : (
+                line.map((segment) => (
+                  <PreviewGlyph
+                    key={segment.id}
+                    segment={segment}
+                    letterSpacing={design.letterSpacing}
+                    italicMock={design.italicMock}
+                    boldMock={design.boldMock}
+                  />
+                ))
+              )}
             </div>
-            <textarea
-              value={text}
-              onChange={e => { setText(e.target.value); setEditNonce(n => n + 1) }}
-              placeholder="พิมพ์ที่นี่ — ฝั่งขวาจะแสดงลายมือ"
-              style={{ flex:1, width:"100%", boxSizing:"border-box", border:"none", padding:"10px 12px", fontSize:14, lineHeight:1.45, resize:"none", outline:"none", fontFamily:"'Segoe UI','DM Sans',system-ui,sans-serif", minHeight:280, background:"#fff", color:"#323130" }}
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export default function Step5Preview({
+  design,
+  setDesign,
+  pageSize,
+  previewLines,
+  zoom,
+  setZoom,
+  pan,
+  setPan,
+  fontState,
+  onToggleFullscreen,
+}) {
+  const viewportRef = useRef(null)
+  const dragStateRef = useRef(null)
+  const [isDragging, setIsDragging] = useState(false)
+
+  const updateZoom = (nextZoom) => {
+    setZoom(clamp(nextZoom, ZOOM_MIN, ZOOM_MAX))
+  }
+
+  const resetView = () => {
+    setPan({ x: 0, y: 0 })
+    setZoom(1)
+  }
+
+  const fitToViewport = () => {
+    const viewport = viewportRef.current
+    if (!viewport) return
+    const safeWidth = Math.max(1, viewport.clientWidth - 120)
+    const safeHeight = Math.max(1, viewport.clientHeight - 120)
+    const scale = Math.min(safeWidth / pageSize.width, safeHeight / pageSize.height)
+    updateZoom(scale)
+    setPan({ x: 0, y: 0 })
+  }
+
+  const onPointerDown = (event) => {
+    if (event.button !== 0) return
+    const target = event.currentTarget
+    target.setPointerCapture(event.pointerId)
+    dragStateRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      panX: pan.x,
+      panY: pan.y,
+    }
+    setIsDragging(true)
+  }
+
+  const onPointerMove = (event) => {
+    const state = dragStateRef.current
+    if (!state || event.pointerId !== state.pointerId) return
+    const dx = event.clientX - state.startX
+    const dy = event.clientY - state.startY
+    setPan({ x: state.panX + dx, y: state.panY + dy })
+  }
+
+  const onPointerUp = (event) => {
+    const state = dragStateRef.current
+    if (!state || event.pointerId !== state.pointerId) return
+    event.currentTarget.releasePointerCapture(event.pointerId)
+    dragStateRef.current = null
+    setIsDragging(false)
+  }
+
+  const onWheel = (event) => {
+    if (!event.ctrlKey && !event.metaKey) return
+    event.preventDefault()
+    const delta = event.deltaY > 0 ? -0.07 : 0.07
+    updateZoom(zoom + delta)
+  }
+
+  const isCustomSize = design.pagePreset === "custom"
+
+  return (
+    <section className="step5-card relative flex min-h-0 flex-col overflow-hidden rounded-2xl border border-white/70 bg-white/80 shadow-sm backdrop-blur">
+      <div className="flex flex-wrap items-center gap-2 border-b border-slate-200/80 px-3 py-3 md:px-4">
+        <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+          Canvas
+        </span>
+
+        <select
+          value={design.pagePreset}
+          onChange={(event) => setDesign({ pagePreset: event.target.value })}
+          className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 outline-none transition focus:border-slate-400"
+        >
+          <option value="a4">A4 (794×1123)</option>
+          <option value="square">Square (1080×1080)</option>
+          <option value="story">Story (1080×1920)</option>
+          <option value="custom">Custom</option>
+        </select>
+
+        {isCustomSize && (
+          <>
+            <input
+              type="number"
+              min={480}
+              max={3000}
+              value={design.customWidth}
+              onChange={(event) => setDesign({ customWidth: Number(event.target.value) || 480 })}
+              className="h-9 w-24 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 outline-none transition focus:border-slate-400"
             />
-          </div>
-          <p style={{ fontSize:10, color:"#605e5c", margin:0, lineHeight:1.45 }}>
-            PDF: กด Export PDF → เลือก "Microsoft Print to PDF"
-            <br />
-            <span style={{ color:"#0078d4" }}>ถ้ามีวันที่/หัวข้อมุมกระดาษ: เปิด "More settings" แล้วปิด "Headers and footers"</span>
-          </p>
-        </div>
+            <input
+              type="number"
+              min={640}
+              max={4000}
+              value={design.customHeight}
+              onChange={(event) => setDesign({ customHeight: Number(event.target.value) || 640 })}
+              className="h-9 w-24 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 outline-none transition focus:border-slate-400"
+            />
+          </>
+        )}
 
-        {/* Right panel — preview */}
-        <div style={{ flex:1, minWidth:0, background:"#2d2c2c", borderRadius:6, border:"1px solid #1a1a1a", boxShadow:"inset 0 0 0 1px rgba(255,255,255,.04)", overflowY:"scroll", overflowX:"hidden", position:"relative", display:"flex", justifyContent:"center", alignItems:"flex-start", padding:"12px 10px 16px" }}>
-          {/* Zoom controls */}
-          <div style={{ position:"absolute", top:8, right:10, zIndex:5, display:"flex", alignItems:"center", gap:8, background:"rgba(255,255,255,0.92)", border:"1px solid #d2d0ce", borderRadius:10, padding:"6px 8px" }}>
-            <button type="button" onClick={() => setPreviewZoom(z => Math.max(0.7, +(z-0.1).toFixed(2)))} style={{ width:26, height:26, borderRadius:8, border:"1px solid #d2d0ce", background:"#fff", cursor:"pointer", fontSize:14, color:"#323130" }} aria-label="Zoom out">-</button>
-            <span style={{ fontSize:12, color:"#605e5c", minWidth:52, textAlign:"center" }}>{Math.round(previewZoom*100)}%</span>
-            <button type="button" onClick={() => setPreviewZoom(z => Math.min(1.6, +(z+0.1).toFixed(2)))} style={{ width:26, height:26, borderRadius:8, border:"1px solid #d2d0ce", background:"#fff", cursor:"pointer", fontSize:14, color:"#323130" }} aria-label="Zoom in">+</button>
-          </div>
+        <div className="mx-1 h-6 w-px bg-slate-200" />
 
-          {/* Paper */}
-          <div style={{ width:"100%", maxWidth:595, minHeight:842*previewZoom, position:"relative" }}>
-            <div style={{ width:"100%", maxWidth:595, minHeight:842, background:"#ffffff", boxShadow:"0 4px 24px rgba(0,0,0,.45),0 0 0 1px rgba(0,0,0,.12)", padding:`${marginPx}px`, boxSizing:"border-box", transform:`scale(${previewZoom})`, transformOrigin:"top center" }}>
-              <div style={{ transform:`translateX(${outputOffsetX}px)`, transformOrigin:"top left", fontSize, lineHeight, color:textColor, textAlign:alignment, width:"100%", maxWidth:"100%", boxSizing:"border-box", minHeight:640, wordBreak:"break-word", overflowWrap:"anywhere", overflowX:"hidden", WebkitFontSmoothing:"antialiased", textRendering:"optimizeLegibility" }}>
-                {tokens.length === 0
-                  ? <span style={{ opacity:0.35, color:"#605e5c" }}>พิมพ์ฝั่งซ้ายเพื่อดูลายมือบนกระดาษ…</span>
-                  : tokens.map(renderToken)
-                }
-              </div>
-            </div>
-          </div>
+        <button
+          type="button"
+          onClick={() => updateZoom(zoom - 0.1)}
+          className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+        >
+          -
+        </button>
+        <span className="min-w-[64px] text-center text-xs font-semibold text-slate-600">
+          {Math.round(zoom * 100)}%
+        </span>
+        <button
+          type="button"
+          onClick={() => updateZoom(zoom + 0.1)}
+          className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+        >
+          +
+        </button>
+        <button
+          type="button"
+          onClick={fitToViewport}
+          className="inline-flex h-9 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+        >
+          Fit
+        </button>
+        <button
+          type="button"
+          onClick={resetView}
+          className="inline-flex h-9 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+        >
+          Center
+        </button>
+
+        <div className="ml-auto flex items-center gap-2">
+          <span className="hidden rounded-full bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-500 sm:inline-flex">
+            {pageSize.label}
+          </span>
+          <button
+            type="button"
+            onClick={onToggleFullscreen}
+            className="inline-flex h-9 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+          >
+            Fullscreen
+          </button>
         </div>
       </div>
 
-      {/* Status bar — data-driven counts, no Step 1 selection count */}
-      <div style={{ height:26, flexShrink:0, background:"#f3f2f1", borderTop:"1px solid #d2d0ce", display:"flex", alignItems:"center", padding:"0 12px", fontSize:11, color:"#605e5c", gap:16 }}>
-        <span>หน้า 1 จาก 1</span>
-        <span>คำ: {text.trim() ? text.trim().split(/\s+/).filter(Boolean).length : 0}</span>
-        <span>แหล่งข้อมูล: {usingVersioned ? `versioned (${versionedGlyphs.length})` : `raw (${extractedGlyphs.length})`}</span>
-        {/* 
-          sourceChars REMOVED — was showing Step 1 selection count which is meaningless here.
-          Now shows actual extracted glyph count from PDF.
-        */}
-        <span>glyphs ที่ extract: {glyphCount}</span>
-        <span>seed {documentSeed}</span>
-        <span>dna #{dnaNonce}</span>
-        <div style={{ flex:1 }} />
-        <span>100%</span>
+      <div
+        ref={viewportRef}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        onWheel={onWheel}
+        className="relative flex-1 overflow-hidden bg-[radial-gradient(circle_at_20%_20%,rgba(148,163,184,0.18),rgba(241,245,249,0.65)_34%,rgba(226,232,240,0.9)_100%)]"
+        style={{ cursor: isDragging ? "grabbing" : "grab" }}
+      >
+        <div className="pointer-events-none absolute inset-0">
+          <div className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-slate-300/50" />
+          <div className="absolute top-1/2 left-0 h-px w-full -translate-y-1/2 bg-slate-300/50" />
+        </div>
+
+        <div
+          className="absolute left-1/2 top-1/2"
+          style={{
+            transform: `translate(calc(-50% + ${pan.x}px), calc(-50% + ${pan.y}px)) scale(${zoom})`,
+            transformOrigin: "center center",
+          }}
+        >
+          <div className="relative">
+            <PreviewPaper design={design} previewLines={previewLines} pageSize={pageSize} />
+          </div>
+        </div>
+
+        {fontState.status !== "ready" && (
+          <div className="pointer-events-none absolute left-4 bottom-4 rounded-xl border border-amber-200 bg-amber-50/95 px-3 py-2 text-xs font-medium text-amber-700 shadow-sm">
+            Preview is using fallback fonts until MyHandwriting loads.
+          </div>
+        )}
       </div>
-    </>
+    </section>
   )
 }
