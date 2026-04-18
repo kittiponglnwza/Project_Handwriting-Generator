@@ -125,71 +125,68 @@ function traceToSVGPath(inkCanvas, width, height) {
     const imageData = ctx2.getImageData(0, 0, width, height)
     const { data } = imageData
 
+    // Build ink mask
     const threshold = 180
     const mask = new Uint8Array(width * height)
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const idx = (y * width + x) * 4
-        const r = data[idx],
-          g = data[idx + 1],
-          b = data[idx + 2],
-          a = data[idx + 3]
-        if (a < 50) {
-          mask[y * width + x] = 0
-          continue
-        }
-        const lum = r * 0.2126 + g * 0.7152 + b * 0.0722
-        mask[y * width + x] = lum < threshold ? 1 : 0
-      }
+    for (let i = 0; i < width * height; i++) {
+      const idx = i * 4
+      const a = data[idx + 3]
+      if (a < 50) continue
+      const lum = data[idx] * 0.2126 + data[idx + 1] * 0.7152 + data[idx + 2] * 0.0722
+      if (lum < threshold) mask[i] = 1
     }
 
     const inkCount = mask.reduce((s, v) => s + v, 0)
     if (inkCount < 10) return null
 
-    const scaleX = 100 / width
-    const scaleY = 100 / height
+    // Tight bounding box
+    let bxMin = width, bxMax = 0, byMin = height, byMax = 0
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        if (mask[y * width + x] === 1) {
+          if (x < bxMin) bxMin = x
+          if (x > bxMax) bxMax = x
+          if (y < byMin) byMin = y
+          if (y > byMax) byMax = y
+        }
+      }
+    }
+    const bw = bxMax - bxMin || 1
+    const bh = byMax - byMin || 1
+
+    // Normalize ink bbox → 5..95 in 0-100 viewBox
+    const PAD = 5
+    const nx = x => PAD + ((x - bxMin) / bw) * (100 - PAD * 2)
+    const ny = y => PAD + ((y - byMin) / bh) * (100 - PAD * 2)
+
+    // Sample step — balance detail vs path size
+    const STEP = Math.max(1, Math.floor(Math.min(width, height) / 60))
+    // Stroke thickness in normalized units (gives filled rectangles)
+    const strokeH = Math.max(0.8, (STEP / bh) * 90)
 
     const pathCmds = []
-    const STEP = Math.max(1, Math.floor(Math.min(width, height) / 80))
 
-    let prevRuns = []
-    for (let y = 0; y < height; y += STEP) {
+    // For each row of ink runs, emit a filled rectangle (closed polygon)
+    for (let y = byMin; y <= byMax; y += STEP) {
       const runs = []
-      let inRun = false
-      let runStart = 0
-
-      for (let x = 0; x < width; x++) {
-        const isInk = mask[y * width + x] === 1
-        if (isInk && !inRun) {
-          inRun = true
-          runStart = x
-        } else if (!isInk && inRun) {
+      let inRun = false, runStart = 0
+      for (let x = bxMin; x <= bxMax + 1; x++) {
+        const isInk = x <= bxMax && mask[y * width + x] === 1
+        if (isInk && !inRun) { inRun = true; runStart = x }
+        else if (!isInk && inRun) {
           inRun = false
           runs.push({ start: runStart, end: x - 1 })
         }
       }
-      if (inRun) runs.push({ start: runStart, end: width - 1 })
 
       for (const run of runs) {
-        const midX = (((run.start + run.end) / 2) * scaleX).toFixed(1)
-        const midY = (y * scaleY).toFixed(1)
-
-        const matched = prevRuns.find(
-          pr => pr.start <= run.end + STEP * 2 && pr.end >= run.start - STEP * 2
-        )
-
-        if (matched) {
-          const prevMidX = (((matched.start + matched.end) / 2) * scaleX).toFixed(1)
-          const prevMidY = ((y - STEP) * scaleY).toFixed(1)
-          pathCmds.push(`M ${prevMidX} ${prevMidY} L ${midX} ${midY}`)
-        } else {
-          const x1 = (run.start * scaleX).toFixed(1)
-          const x2 = (run.end * scaleX).toFixed(1)
-          pathCmds.push(`M ${x1} ${midY} L ${x2} ${midY}`)
-        }
+        const x1 = nx(run.start).toFixed(2)
+        const x2 = nx(run.end + 1).toFixed(2)
+        const y1 = ny(y).toFixed(2)
+        const y2 = (ny(y) + strokeH).toFixed(2)
+        // Closed filled rectangle: M x1 y1 L x2 y1 L x2 y2 L x1 y2 Z
+        pathCmds.push(`M ${x1} ${y1} L ${x2} ${y1} L ${x2} ${y2} L ${x1} ${y2} Z`)
       }
-
-      prevRuns = runs
     }
 
     if (pathCmds.length === 0) return null

@@ -281,17 +281,31 @@ export async function compileFontBuffer(glyphMap, fontName = FONT_NAME, onProgre
   // ── .notdef (index 0, required by OpenType spec) ──────────────────────────
   otGlyphs.push(buildNotdefGlyph())
 
+  // Track used unicodes to prevent cmap duplicates
+  const usedUnicodes = new Set([0])
+
   // ── space (U+0020) ────────────────────────────────────────────────────────
-  otGlyphs.push(new opentype.Glyph({
-    name: 'space', unicode: 0x0020, advanceWidth: 240,
-    path: new opentype.Path(),
-  }))
+  if (!glyphMap.has(' ')) {
+    otGlyphs.push(new opentype.Glyph({
+      name: 'space', unicode: 0x0020, advanceWidth: 240,
+      path: new opentype.Path(),
+    }))
+    usedUnicodes.add(0x0020)
+  }
 
   // ── Per-character glyphs ──────────────────────────────────────────────────
   let done = 0
 
   for (const [ch, data] of entries) {
     const { codepoint: cp, default: defPath, alt1: alt1Path, alt2: alt2Path } = data
+
+    // ── Skip duplicate unicodes (prevents cmap corruption)
+    if (usedUnicodes.has(cp)) {
+      skipped.push({ ch, reason: `duplicate unicode U+${cp.toString(16).toUpperCase()}` })
+      done++
+      continue
+    }
+    usedUnicodes.add(cp)
 
     // ── Validate default path ────────────────────────────────────────────
     const defVal = validateSvgPath(defPath)
