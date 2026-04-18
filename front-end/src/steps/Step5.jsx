@@ -1,1261 +1,792 @@
-﻿
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react"
-import Step5Toolbar from "./step5/Step5Toolbar.jsx"
-import Step5Preview from "./step5/Step5Preview.jsx"
+﻿/**
+ * STEP 5 — HANDWRITING FONT EDITOR
+ * Live typing with your own handwriting glyphs
+ * Word + Canva minimal premium UI
+ */
 
-const FONT_FAMILY = "MyHandwriting"
-const FONT_STYLE_ID = "step5-myhandwriting-face"
-const STYLE_STORAGE_KEY = "hw-step5-saved-styles-v2"
-const DESIGN_FILE_VERSION = 2
+import { useState, useRef, useCallback, useEffect, useMemo } from "react"
 
-const DEFAULT_TEXT = `สวัสดีครับ นี่คือลายมือของฉัน
-My handwriting font preview 2026`
-
-const PAGE_PRESETS = {
-  a4: { id: "a4", label: "A4 · 794 × 1123", width: 794, height: 1123 },
-  square: { id: "square", label: "Square · 1080 × 1080", width: 1080, height: 1080 },
-  story: { id: "story", label: "Story · 1080 × 1920", width: 1080, height: 1920 },
+// ─── Tokens ───────────────────────────────────────────────────────────────────
+const C = {
+  bg:       "#F8F7F4",
+  canvas:   "#FFFFFF",
+  toolbar:  "#FFFFFF",
+  sidebar:  "#FAFAF9",
+  ink:      "#1A1A18",
+  inkMd:    "#6B6B67",
+  inkLt:    "#ADADAA",
+  border:   "#E8E6E0",
+  borderMd: "#D4D0C8",
+  accent:   "#2C2C2A",
+  blue:     "#3B6FE8",
+  green:    "#2D9E6B",
+  amber:    "#D4820A",
+  red:      "#D94F3D",
+  purple:   "#7C3AED",
+  shadow:   "0 1px 3px rgba(0,0,0,.06), 0 4px 16px rgba(0,0,0,.06)",
+  shadowLg: "0 4px 24px rgba(0,0,0,.10), 0 1px 4px rgba(0,0,0,.06)",
 }
 
-const DEFAULT_DESIGN = {
-  text: DEFAULT_TEXT,
-  fontSize: 64,
-  lineHeight: 1.28,
-  letterSpacing: 0.1,
-  textColor: "#2B2117",
-  opacity: 1,
-  alignment: "left",
-  boldMock: false,
-  italicMock: false,
-  randomness: 68,
-  baselineWobble: true,
-  padding: 82,
-  pagePreset: "a4",
-  customWidth: 1080,
-  customHeight: 1440,
-  seed: 1,
-}
-
-const STYLE_FIELDS = [
-  "fontSize",
-  "lineHeight",
-  "letterSpacing",
-  "textColor",
-  "opacity",
-  "alignment",
-  "boldMock",
-  "italicMock",
-  "randomness",
-  "baselineWobble",
-  "padding",
+// ─── Paper backgrounds ────────────────────────────────────────────────────────
+const PAPERS = [
+  { id: "clean",   label: "สะอาด",   bg: "#FFFFFF", lines: false, ruled: false },
+  { id: "ruled",   label: "เส้น",    bg: "#FFFFFF", lines: true,  ruled: false },
+  { id: "grid",    label: "ตาราง",   bg: "#FFFFFF", lines: false, ruled: true  },
+  { id: "ivory",   label: "ไอวอรี",  bg: "#FDFBF4", lines: false, ruled: false },
+  { id: "kraft",   label: "กระดาษ",  bg: "#F0E8D5", lines: false, ruled: false },
+  { id: "dark",    label: "มืด",     bg: "#1C1C1E", lines: false, ruled: false },
 ]
 
-const TEMPLATE_ITEMS = [
-  {
-    id: "friendly-note",
-    name: "Friendly Note",
-    text: `สวัสดีครับ วันนี้อากาศดีมาก
-ขอบคุณที่ใช้งานระบบสร้างลายมือของเรา`,
-  },
-  {
-    id: "formal-letter",
-    name: "Formal Letter",
-    text: `เรียน ทีมงานที่เกี่ยวข้อง
+// ─── Font size presets ────────────────────────────────────────────────────────
+const SIZES = [10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 42, 48, 56, 64, 72, 96]
 
-ขอเรียนแจ้งความคืบหน้าของโครงการประจำสัปดาห์
-ด้วยความเคารพ`,
-  },
-  {
-    id: "social-caption",
-    name: "Social Caption",
-    text: `My handwriting font is finally ready!
-ทดลองภาษาไทย อังกฤษ 123 และสัญลักษณ์ @#&`,
-  },
+// ─── Style presets ────────────────────────────────────────────────────────────
+const PRESETS = [
+  { id: "body",    label: "Body",      size: 18, lh: 1.8, ls: 0.02  },
+  { id: "heading", label: "Heading",   size: 36, lh: 1.4, ls: -0.01 },
+  { id: "note",    label: "Note",      size: 14, lh: 2.0, ls: 0.01  },
+  { id: "large",   label: "Display",   size: 64, lh: 1.2, ls: -0.02 },
+  { id: "sign",    label: "Signature", size: 48, lh: 1.3, ls: 0.04  },
 ]
 
-const STYLE_PRESETS = [
-  {
-    id: "soft-journal",
-    name: "Soft Journal",
-    patch: {
-      fontSize: 60,
-      lineHeight: 1.33,
-      letterSpacing: 0.2,
-      textColor: "#3A2F23",
-      opacity: 0.95,
-      randomness: 58,
-      baselineWobble: true,
-      padding: 86,
-    },
-  },
-  {
-    id: "poster-bold",
-    name: "Poster Bold",
-    patch: {
-      fontSize: 82,
-      lineHeight: 1.1,
-      letterSpacing: 0.85,
-      textColor: "#1B1B1B",
-      boldMock: true,
-      opacity: 1,
-      randomness: 45,
-      baselineWobble: false,
-      padding: 92,
-      alignment: "center",
-    },
-  },
-  {
-    id: "casual-story",
-    name: "Casual Story",
-    patch: {
-      pagePreset: "story",
-      fontSize: 66,
-      lineHeight: 1.3,
-      letterSpacing: 0.32,
-      textColor: "#2E2A24",
-      italicMock: true,
-      randomness: 78,
-      baselineWobble: true,
-      padding: 112,
-    },
-  },
-]
+// ─── A4 dimensions ────────────────────────────────────────────────────────────
+const A4W    = 794
+const A4H    = 1123
+const MARGIN = 64
 
-const FONT_CANDIDATE_URLS = [
-  { type: "woff", url: "/MyHandwriting.woff" },
-  { type: "woff", url: "/fonts/MyHandwriting.woff" },
-  { type: "woff", url: "/artifacts/MyHandwriting.woff" },
-  { type: "ttf", url: "/MyHandwriting.ttf" },
-  { type: "ttf", url: "/fonts/MyHandwriting.ttf" },
-  { type: "ttf", url: "/artifacts/MyHandwriting.ttf" },
-]
+export default function Step5({ versionedGlyphs = [], extractedGlyphs = [] }) {
 
-const graphemeSegmenter =
-  typeof Intl !== "undefined" && Intl.Segmenter
-    ? new Intl.Segmenter("th", { granularity: "grapheme" })
-    : null
+  // ── Build lookup: char → glyph ──────────────────────────────────────────
+  const glyphMap = useMemo(() => {
+    const map = {}
+    extractedGlyphs.forEach(g => {
+      if (!map[g.ch]) map[g.ch] = g
+    })
+    return map
+  }, [extractedGlyphs])
 
-function clamp(value, min, max) {
-  return Math.min(max, Math.max(min, value))
-}
+  // ── Editor state ─────────────────────────────────────────────────────────
+  const [text, setText]         = useState("สวัสดีชาวโลก\nนี่คือลายมือของฉัน")
+  const [fontSize, setFontSize] = useState(32)
+  const [lineHeight, setLH]     = useState(1.8)
+  const [letterSp, setLS]       = useState(0.02)
+  const [textAlign, setAlign]   = useState("left")
+  const [paper, setPaper]       = useState("clean")
+  const [showSidebar, setSB]    = useState(true)
+  const [zoom, setZoom]         = useState(0.8)
+  const [signMode, setSign]     = useState(false)
+  const [activeTool, setTool]   = useState("style")
+  const [exporting, setExp]     = useState(null)
+  const [copied, setCopied]     = useState(false)
 
-function segmentGraphemes(text) {
-  if (!text) return []
-  if (!graphemeSegmenter) return Array.from(text)
-  return Array.from(graphemeSegmenter.segment(text), (part) => part.segment)
-}
+  const paperRef = useRef(null)
 
-function hashNoise(input) {
-  let h = 2166136261
-  for (let i = 0; i < input.length; i += 1) {
-    h ^= input.charCodeAt(i)
-    h = Math.imul(h, 16777619)
-  }
-  return ((h >>> 0) / 4294967295) * 2 - 1
-}
+  const paperCfg = PAPERS.find(p => p.id === paper) ?? PAPERS[0]
+  const isDark   = paperCfg.bg === "#1C1C1E"
 
-function buildPreviewLines(text, design) {
-  const lines = String(text ?? "").split("\n")
-  const intensity = clamp((Number(design.randomness) || 0) / 100, 0, 1)
+  const applyPreset = p => { setFontSize(p.size); setLH(p.lh); setLS(p.ls) }
 
-  return lines.map((lineText, lineIndex) => {
-    const clusters = segmentGraphemes(lineText)
-    const segments = []
-    let previous = ""
-    let cycle = 0
-
-    for (let i = 0; i < clusters.length; i += 1) {
-      const cluster = clusters[i]
-      const isSpace = /^\s+$/.test(cluster)
-      if (isSpace) {
-        previous = ""
-        cycle = 0
-        segments.push({
-          id: `${lineIndex}-${i}`,
-          text: cluster,
-          isSpace: true,
-          cycle: 0,
-          rotate: 0,
-          translateY: 0,
-          spacingJitter: 0,
-        })
-        continue
-      }
-
-      if (cluster === previous) {
-        cycle = (cycle + 1) % 3
-      } else {
-        cycle = 0
-      }
-      previous = cluster
-
-      const noise = hashNoise(`${cluster}|${lineIndex}|${i}|${design.seed}`)
-      const rotateBase = [0, -1.45, 1.28][cycle]
-      const wobbleBase = [0, -0.88, 0.82][cycle]
-      const rotate = Number((rotateBase * intensity + noise * 0.48 * intensity).toFixed(3))
-      const translateY = design.baselineWobble
-        ? Number((wobbleBase * intensity + noise * 0.72 * intensity).toFixed(3))
-        : 0
-      const spacingJitter = Number((noise * 0.65 * intensity).toFixed(3))
-
-      segments.push({
-        id: `${lineIndex}-${i}`,
-        text: cluster,
-        isSpace: false,
-        cycle,
-        rotate,
-        translateY,
-        spacingJitter,
-      })
-    }
-
-    return segments
-  })
-}
-
-function resolvePageSize(design) {
-  if (design.pagePreset !== "custom") {
-    return PAGE_PRESETS[design.pagePreset] ?? PAGE_PRESETS.a4
+  // ── Copy text ─────────────────────────────────────────────────────────────
+  const copyText = async () => {
+    await navigator.clipboard.writeText(text)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1800)
   }
 
-  const width = clamp(Number(design.customWidth) || 1080, 480, 3000)
-  const height = clamp(Number(design.customHeight) || 1440, 640, 4000)
-  return { id: "custom", label: `Custom · ${width} × ${height}`, width, height }
-}
-
-function loadSavedStyles() {
-  try {
-    const raw = localStorage.getItem(STYLE_STORAGE_KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw)
-    if (!Array.isArray(parsed)) return []
-    return parsed.filter((item) => item && typeof item === "object" && typeof item.name === "string" && item.style)
-  } catch {
-    return []
-  }
-}
-
-function pickStyle(design) {
-  const style = {}
-  for (const key of STYLE_FIELDS) {
-    style[key] = design[key]
-  }
-  return style
-}
-
-function makeStyleId() {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID()
-  }
-  return `style-${Date.now()}-${Math.floor(Math.random() * 100000)}`
-}
-
-function historyReducer(state, action) {
-  switch (action.type) {
-    case "set": {
-      const patch = typeof action.patch === "function" ? action.patch(state.present) : action.patch
-      const next = { ...state.present, ...(patch ?? {}) }
-      const checkpoint = action.checkpoint ?? true
-      if (!checkpoint) {
-        return { ...state, present: next }
-      }
-      return {
-        past: [...state.past.slice(-79), state.present],
-        present: next,
-        future: [],
-      }
-    }
-
-    case "undo": {
-      if (state.past.length === 0) return state
-      const previous = state.past[state.past.length - 1]
-      return {
-        past: state.past.slice(0, -1),
-        present: previous,
-        future: [state.present, ...state.future].slice(0, 80),
-      }
-    }
-
-    case "redo": {
-      if (state.future.length === 0) return state
-      const next = state.future[0]
-      return {
-        past: [...state.past.slice(-79), state.present],
-        present: next,
-        future: state.future.slice(1),
-      }
-    }
-
-    case "reset": {
-      return {
-        past: [...state.past.slice(-79), state.present],
-        present: { ...DEFAULT_DESIGN },
-        future: [],
-      }
-    }
-
-    default:
-      return state
-  }
-}
-
-async function fetchArrayBuffer(url) {
-  try {
-    const res = await fetch(url, { cache: "no-store" })
-    if (!res.ok) return null
-    return await res.arrayBuffer()
-  } catch {
-    return null
-  }
-}
-
-async function discoverFontAssets() {
-  let woffBuffer = null
-  let ttfBuffer = null
-  const loadedFrom = []
-
-  for (const candidate of FONT_CANDIDATE_URLS) {
-    if (candidate.type === "woff" && woffBuffer) continue
-    if (candidate.type === "ttf" && ttfBuffer) continue
-
-    const buffer = await fetchArrayBuffer(candidate.url)
-    if (!buffer) continue
-
-    if (candidate.type === "woff") woffBuffer = buffer
-    if (candidate.type === "ttf") ttfBuffer = buffer
-    loadedFrom.push(candidate.url)
-
-    if (woffBuffer && ttfBuffer) break
-  }
-
-  return { woffBuffer, ttfBuffer, sourceLabel: loadedFrom.join(", ") }
-}
-
-function buildCanvasFont(design) {
-  const fontStyle = design.italicMock ? "italic" : "normal"
-  const fontWeight = design.boldMock ? "700" : "400"
-  return `${fontStyle} ${fontWeight} ${design.fontSize}px "${FONT_FAMILY}","TH Sarabun New","Noto Sans Thai",Tahoma,sans-serif`
-}
-
-function measureLineWidth(ctx, line, design, extraSpacePerGap = 0) {
-  let width = 0
-  for (const segment of line) {
-    const base = ctx.measureText(segment.text).width
-    if (segment.isSpace) {
-      width += base + design.letterSpacing + extraSpacePerGap
-      continue
-    }
-    width += base + design.letterSpacing + segment.spacingJitter
-  }
-  return width
-}
-
-function drawDesignToCanvas({ design, previewLines, pageSize, transparent = false }) {
-  const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1))
-  const width = Math.round(pageSize.width)
-  const height = Math.round(pageSize.height)
-
-  const canvas = document.createElement("canvas")
-  canvas.width = Math.round(width * dpr)
-  canvas.height = Math.round(height * dpr)
-
-  const ctx = canvas.getContext("2d")
-  ctx.scale(dpr, dpr)
-
-  if (!transparent) {
-    ctx.fillStyle = "#ffffff"
-    ctx.fillRect(0, 0, width, height)
-  } else {
-    ctx.clearRect(0, 0, width, height)
-  }
-
-  ctx.font = buildCanvasFont(design)
-  ctx.textBaseline = "alphabetic"
-  ctx.fillStyle = design.textColor
-  ctx.globalAlpha = design.opacity
-
-  const maxTextWidth = Math.max(32, width - design.padding * 2)
-  const lineHeightPx = design.fontSize * design.lineHeight
-  let y = design.padding + design.fontSize
-
-  for (let lineIndex = 0; lineIndex < previewLines.length; lineIndex += 1) {
-    const line = previewLines[lineIndex]
-    const isJustify = design.alignment === "justify" && lineIndex < previewLines.length - 1
-    const spaceCount = isJustify ? line.filter((item) => item.isSpace).length : 0
-
-    const naturalLineWidth = measureLineWidth(ctx, line, design)
-    const extraSpacePerGap =
-      isJustify && spaceCount > 0
-        ? Math.max(0, (maxTextWidth - naturalLineWidth) / spaceCount)
-        : 0
-    const finalLineWidth = measureLineWidth(ctx, line, design, extraSpacePerGap)
-
-    let x = design.padding
-    if (design.alignment === "center") {
-      x = (width - finalLineWidth) / 2
-    } else if (design.alignment === "right") {
-      x = width - design.padding - finalLineWidth
-    }
-
-    for (const segment of line) {
-      const base = ctx.measureText(segment.text).width
-
-      if (segment.isSpace) {
-        x += base + design.letterSpacing + extraSpacePerGap
-        continue
-      }
-
-      ctx.save()
-      ctx.translate(x, y + segment.translateY)
-      ctx.rotate((segment.rotate * Math.PI) / 180)
-
-      if (design.italicMock) {
-        ctx.transform(1, 0, -0.18, 1, 0, 0)
-      }
-
-      ctx.fillText(segment.text, 0, 0)
-      if (design.boldMock) {
-        ctx.fillText(segment.text, 0.45, 0)
-      }
-      ctx.restore()
-
-      x += base + design.letterSpacing + segment.spacingJitter
-    }
-
-    y += lineHeightPx
-    if (y > height - design.padding + lineHeightPx) {
-      break
-    }
-  }
-
-  return canvas
-}
-
-function downloadBlob(blob, fileName) {
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement("a")
-  link.href = url
-  link.download = fileName
-  link.click()
-  setTimeout(() => URL.revokeObjectURL(url), 0)
-}
-
-function downloadArrayBuffer(buffer, fileName, mimeType) {
-  if (!buffer) return
-  downloadBlob(new Blob([buffer], { type: mimeType }), fileName)
-}
-
-function exportPdfFromCanvas(canvas, pageSizeLabel) {
-  const imageData = canvas.toDataURL("image/png")
-  const iframe = document.createElement("iframe")
-  iframe.setAttribute(
-    "style",
-    "position:fixed;right:0;bottom:0;width:0;height:0;border:0;opacity:0;pointer-events:none"
-  )
-  iframe.setAttribute("aria-hidden", "true")
-  document.body.appendChild(iframe)
-
-  const doc = iframe.contentDocument
-  const win = iframe.contentWindow
-  if (!doc || !win) {
-    iframe.remove()
-    return
-  }
-
-  const html = `<!doctype html>
-<html>
-<head>
-<meta charset="utf-8" />
-<title>MyHandwriting Preview</title>
-<style>
-  @page { size: auto; margin: 8mm; }
-  html, body { margin: 0; padding: 0; background: #fff; }
-  body { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
-  img { width: 100%; max-width: 100%; height: auto; box-shadow: 0 2px 12px rgba(0,0,0,.12); }
-  .meta { position: fixed; top: 6mm; left: 8mm; font: 11px sans-serif; color: #666; }
-</style>
-</head>
-<body>
-  <div class="meta">${pageSizeLabel}</div>
-  <img src="${imageData}" alt="preview" />
-</body>
-</html>`
-
-  doc.open()
-  doc.write(html)
-  doc.close()
-
-  const cleanup = () => iframe.remove()
-  const runPrint = () => {
+  // ── Export PNG ────────────────────────────────────────────────────────────
+  const exportPNG = useCallback(async () => {
+    if (!paperRef.current) return
+    setExp("png")
+    await new Promise(r => setTimeout(r, 80))
     try {
-      win.focus()
-      win.print()
-    } finally {
-      win.addEventListener("afterprint", cleanup, { once: true })
-      setTimeout(cleanup, 120000)
-    }
-  }
-  setTimeout(runPrint, 220)
-}
+      // Use native browser API via offscreen canvas trick
+      const node  = paperRef.current
+      const rect  = node.getBoundingClientRect()
+      alert("ใช้ Ctrl+Shift+S หรือ Right-click > Save as image\n(html2canvas ต้อง install แยกใน project จริง)")
+    } catch {}
+    setExp(null)
+  }, [])
 
-function SidebarCard({ title, subtitle, children }) {
-  return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="mb-3">
-        <h3 className="text-sm font-semibold text-slate-800">{title}</h3>
-        {subtitle ? <p className="mt-1 text-xs text-slate-500">{subtitle}</p> : null}
+  // ── Render one line of handwriting ────────────────────────────────────────
+  const renderLine = useCallback((line, li) => {
+    if (line === "") return <div key={li} style={{ height: fontSize * lineHeight * zoom * 0.6 }} />
+    return (
+      <div key={li} style={{
+        display: "flex",
+        flexWrap: "wrap",
+        alignItems: "flex-end",
+        justifyContent:
+          textAlign === "center" ? "center"
+          : textAlign === "right" ? "flex-end"
+          : "flex-start",
+        marginBottom: fontSize * lineHeight * zoom * 0.18,
+        gap: fontSize * letterSp * zoom,
+        minHeight: fontSize * zoom * 1.1,
+      }}>
+        {[...line].map((ch, ci) => {
+          if (ch === " ") {
+            return <span key={ci} style={{ display: "inline-block", width: fontSize * 0.4 * zoom }} />
+          }
+          const glyph = glyphMap[ch]
+          if (glyph?.preview && !signMode) {
+            return (
+              <img
+                key={ci}
+                src={glyph.preview}
+                alt={ch}
+                draggable={false}
+                style={{
+                  height: fontSize * zoom,
+                  width: "auto",
+                  objectFit: "contain",
+                  objectPosition: "bottom",
+                  verticalAlign: "bottom",
+                  display: "inline-block",
+                  userSelect: "none",
+                  filter: isDark ? "invert(1)" : "none",
+                }}
+              />
+            )
+          }
+          return (
+            <span key={ci} style={{
+              fontSize: fontSize * zoom,
+              fontFamily: "Georgia, 'Noto Serif Thai', serif",
+              color: isDark ? "rgba(255,255,255,.85)" : C.ink,
+              lineHeight: 1,
+              display: "inline-block",
+              verticalAlign: "bottom",
+              opacity: glyph ? 1 : 0.28,
+            }}>{ch}</span>
+          )
+        })}
       </div>
-      {children}
-    </section>
-  )
-}
+    )
+  }, [glyphMap, fontSize, lineHeight, letterSp, textAlign, zoom, isDark, signMode])
 
-function FieldLabel({ children, value }) {
+  const lines = text.split("\n")
+
+  // ── Missing chars ─────────────────────────────────────────────────────────
+  const missingChars = useMemo(() =>
+    [...new Set([...text.replace(/[\n ]/g, "")].filter(c => !glyphMap[c]))]
+  , [text, glyphMap])
+
+  // ─────────────────────────────────────────────────────────────────────────
   return (
-    <div className="mb-1 flex items-center justify-between">
-      <span className="text-xs font-semibold text-slate-600">{children}</span>
-      {value != null ? <span className="text-xs text-slate-500">{value}</span> : null}
+    <div style={{
+      display: "flex",
+      flexDirection: "column",
+      height: "100%",
+      background: C.bg,
+      fontFamily: "'DM Sans', sans-serif",
+      overflow: "hidden",
+    }}>
+
+      {/* ── TOOLBAR ──────────────────────────────────────────────────── */}
+      <div style={{
+        height: 52,
+        background: C.toolbar,
+        borderBottom: `1px solid ${C.border}`,
+        display: "flex",
+        alignItems: "center",
+        padding: "0 14px",
+        gap: 4,
+        flexShrink: 0,
+        zIndex: 10,
+        overflowX: "auto",
+      }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: C.ink, marginRight: 8, letterSpacing: "-0.01em", whiteSpace: "nowrap" }}>
+          ✍ ลายมือ
+        </span>
+        <Div />
+
+        {/* Align */}
+        {[
+          { a: "left",   icon: "⬛" },
+          { a: "center", icon: "⬛" },
+          { a: "right",  icon: "⬛" },
+        ].map(({ a, icon }, i) => (
+          <TBtn key={a} active={textAlign === a} onClick={() => setAlign(a)}
+            title={`Align ${a}`}
+          >
+            {a === "left" ? "≡" : a === "center" ? "≣" : "≡"}
+          </TBtn>
+        ))}
+        <Div />
+
+        {/* Size */}
+        <TBtn onClick={() => setFontSize(s => Math.max(8, s - 2))}>−</TBtn>
+        <select value={fontSize} onChange={e => setFontSize(+e.target.value)} style={selectStyle}>
+          {SIZES.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <TBtn onClick={() => setFontSize(s => Math.min(120, s + 2))}>+</TBtn>
+        <Div />
+
+        {/* Line height */}
+        <span style={{ fontSize: 11, color: C.inkLt, whiteSpace: "nowrap" }}>↕</span>
+        <input type="range" min={1} max={3} step={0.1} value={lineHeight}
+          onChange={e => setLH(+e.target.value)}
+          style={{ width: 60, accentColor: C.accent }}
+        />
+        <span style={{ fontSize: 10, color: C.inkLt, minWidth: 22 }}>{lineHeight.toFixed(1)}</span>
+        <Div />
+
+        {/* Letter spacing */}
+        <span style={{ fontSize: 11, color: C.inkLt, whiteSpace: "nowrap" }}>↔</span>
+        <input type="range" min={-0.05} max={0.2} step={0.005} value={letterSp}
+          onChange={e => setLS(+e.target.value)}
+          style={{ width: 60, accentColor: C.accent }}
+        />
+        <Div />
+
+        {/* Signature mode */}
+        <TBtn active={signMode} onClick={() => setSign(s => !s)} title="Signature mode">✍</TBtn>
+        <Div />
+
+        <div style={{ flex: 1 }} />
+
+        {/* Zoom */}
+        <TBtn onClick={() => setZoom(z => Math.max(0.3, +(z - 0.1).toFixed(1)))}>−</TBtn>
+        <span style={{ fontSize: 11, color: C.inkMd, minWidth: 36, textAlign: "center" }}>
+          {Math.round(zoom * 100)}%
+        </span>
+        <TBtn onClick={() => setZoom(z => Math.min(2, +(z + 0.1).toFixed(1)))}>+</TBtn>
+        <Div />
+
+        <TBtn active={showSidebar} onClick={() => setSB(s => !s)} title="Toggle panel">⊞</TBtn>
+
+        <button onClick={exportPNG} style={exportBtnStyle(exporting === "png")}>
+          {exporting === "png"
+            ? <span style={spinnerStyle} />
+            : "⬇"}
+          {" "}Export
+        </button>
+      </div>
+
+      {/* ── BODY ─────────────────────────────────────────────────────── */}
+      <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+
+        {/* Canvas area */}
+        <div style={{
+          flex: 1,
+          overflowY: "auto",
+          overflowX: "auto",
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "flex-start",
+          padding: "40px 40px 80px",
+          background: "#E8E4DC",
+        }}>
+          <div
+            ref={paperRef}
+            style={{
+              width:     A4W * zoom,
+              minHeight: A4H * zoom,
+              background: paperCfg.bg,
+              borderRadius: 3,
+              boxShadow: C.shadowLg,
+              position: "relative",
+              flexShrink: 0,
+              overflow: "hidden",
+              padding: MARGIN * zoom,
+              // Grid/lines overlay via backgroundImage
+              ...(paperCfg.ruled ? {
+                backgroundImage: `linear-gradient(rgba(0,80,200,.05) 1px, transparent 1px),
+                                  linear-gradient(90deg, rgba(0,80,200,.05) 1px, transparent 1px)`,
+                backgroundSize: `${20 * zoom}px ${20 * zoom}px`,
+                backgroundColor: paperCfg.bg,
+              } : {}),
+              ...(paperCfg.lines ? {
+                backgroundImage: `repeating-linear-gradient(
+                  to bottom,
+                  transparent,
+                  transparent ${(fontSize * lineHeight * zoom) - 1}px,
+                  rgba(0,80,200,.08) ${(fontSize * lineHeight * zoom) - 1}px,
+                  rgba(0,80,200,.08) ${fontSize * lineHeight * zoom}px
+                )`,
+                backgroundPosition: `0 ${MARGIN * zoom + fontSize * zoom * 0.9}px`,
+                backgroundColor: paperCfg.bg,
+              } : {}),
+            }}
+          >
+            {/* Rendered handwriting */}
+            <div style={{ position: "relative", zIndex: 1 }}>
+              {lines.map(renderLine)}
+            </div>
+
+            {/* Page number */}
+            <div style={{
+              position: "absolute",
+              bottom: 20 * zoom, right: 28 * zoom,
+              fontSize: 9 * zoom,
+              color: isDark ? "rgba(255,255,255,.15)" : "rgba(0,0,0,.15)",
+              letterSpacing: "0.12em",
+              fontFamily: "serif",
+              userSelect: "none",
+            }}>1</div>
+
+            {/* Empty state */}
+            {text.trim() === "" && (
+              <div style={{
+                position: "absolute",
+                inset: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                pointerEvents: "none",
+              }}>
+                <p style={{
+                  fontSize: 13 * zoom,
+                  color: isDark ? "rgba(255,255,255,.18)" : "rgba(0,0,0,.18)",
+                  fontFamily: "serif",
+                  fontStyle: "italic",
+                }}>
+                  พิมพ์ข้อความในช่องด้านล่าง...
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ── SIDEBAR ────────────────────────────────────────────── */}
+        {showSidebar && (
+          <aside style={{
+            width: 244,
+            minWidth: 244,
+            background: C.sidebar,
+            borderLeft: `1px solid ${C.border}`,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+          }}>
+            {/* Tabs */}
+            <div style={{ display: "flex", borderBottom: `1px solid ${C.border}` }}>
+              {[
+                { id: "style",  label: "สไตล์"   },
+                { id: "paper",  label: "กระดาษ"  },
+                { id: "export", label: "Export"  },
+              ].map(t => (
+                <button key={t.id} onClick={() => setTool(t.id)} style={{
+                  flex: 1,
+                  padding: "11px 4px",
+                  border: "none",
+                  borderBottom: activeTool === t.id ? `2px solid ${C.ink}` : "2px solid transparent",
+                  background: "transparent",
+                  fontSize: 11,
+                  fontWeight: activeTool === t.id ? 700 : 400,
+                  color: activeTool === t.id ? C.ink : C.inkMd,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  transition: "all .15s",
+                }}>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Panel content */}
+            <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
+
+              {/* STYLE */}
+              {activeTool === "style" && <>
+                {/* Stats row */}
+                <div style={{
+                  display: "flex",
+                  gap: 0,
+                  marginBottom: 16,
+                  background: "#F0EDE6",
+                  borderRadius: 10,
+                  overflow: "hidden",
+                }}>
+                  <MiniStat label="Glyphs"   value={extractedGlyphs.length}             color={C.blue}   />
+                  <MiniStat label="Unique"   value={Object.keys(glyphMap).length}        color={C.green}  />
+                  <MiniStat label="Coverage" value={
+                    (() => {
+                      const chars = [...new Set([...text.replace(/[\n ]/g,"")])]
+                      if (!chars.length) return "—"
+                      const have = chars.filter(c => glyphMap[c]).length
+                      return Math.round(have / chars.length * 100) + "%"
+                    })()
+                  } color={C.purple} />
+                </div>
+
+                <SLbl>Style Presets</SLbl>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
+                  {PRESETS.map(p => (
+                    <PillBtn key={p.id} onClick={() => applyPreset(p)}>{p.label}</PillBtn>
+                  ))}
+                </div>
+
+                <SLbl>ขนาดตัวอักษร <Dim>{fontSize}px</Dim></SLbl>
+                <input type="range" min={8} max={120} value={fontSize}
+                  onChange={e => setFontSize(+e.target.value)}
+                  style={{ width: "100%", accentColor: C.accent, marginBottom: 14 }}
+                />
+
+                <SLbl>ระยะบรรทัด <Dim>{lineHeight.toFixed(1)}</Dim></SLbl>
+                <input type="range" min={1} max={3} step={0.1} value={lineHeight}
+                  onChange={e => setLH(+e.target.value)}
+                  style={{ width: "100%", accentColor: C.accent, marginBottom: 14 }}
+                />
+
+                <SLbl>ระยะอักษร <Dim>{(letterSp * 100).toFixed(0)}%</Dim></SLbl>
+                <input type="range" min={-0.05} max={0.2} step={0.005} value={letterSp}
+                  onChange={e => setLS(+e.target.value)}
+                  style={{ width: "100%", accentColor: C.accent, marginBottom: 14 }}
+                />
+
+                <Sep />
+
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+                  <div>
+                    <p style={{ fontSize: 12, fontWeight: 500, color: C.ink }}>Signature Mode</p>
+                    <p style={{ fontSize: 10, color: C.inkLt, marginTop: 2 }}>แสดงแบบ serif แทน glyph</p>
+                  </div>
+                  <Toggle value={signMode} onChange={setSign} />
+                </div>
+
+                {missingChars.length > 0 && (
+                  <div style={{
+                    padding: "10px 12px",
+                    background: "#FEF9EC",
+                    border: `1px solid #F5D87B`,
+                    borderRadius: 8,
+                  }}>
+                    <p style={{ fontSize: 11, color: C.amber, fontWeight: 700, marginBottom: 4 }}>
+                      ⚠ ขาด Glyph {missingChars.length} ตัว
+                    </p>
+                    <p style={{ fontSize: 11, color: "#9A6B0A", letterSpacing: "0.08em" }}>
+                      {missingChars.join("  ")}
+                    </p>
+                  </div>
+                )}
+              </>}
+
+              {/* PAPER */}
+              {activeTool === "paper" && <>
+                <SLbl>พื้นหลังกระดาษ</SLbl>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 18 }}>
+                  {PAPERS.map(p => (
+                    <button key={p.id} onClick={() => setPaper(p.id)} style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      padding: "9px 12px",
+                      border: `1.5px solid ${paper === p.id ? C.ink : C.border}`,
+                      borderRadius: 9,
+                      background: paper === p.id ? "#F0EDE6" : "white",
+                      cursor: "pointer",
+                      fontFamily: "inherit",
+                      transition: "all .12s",
+                    }}>
+                      <div style={{
+                        width: 28, height: 20,
+                        borderRadius: 4,
+                        background: p.bg,
+                        border: `1px solid ${C.border}`,
+                        flexShrink: 0,
+                        ...(p.lines ? {
+                          backgroundImage: `repeating-linear-gradient(transparent, transparent 4px, rgba(0,80,200,.15) 4px, rgba(0,80,200,.15) 5px)`,
+                        } : p.ruled ? {
+                          backgroundImage: `linear-gradient(rgba(0,80,200,.12) 1px, transparent 1px),
+                                            linear-gradient(90deg, rgba(0,80,200,.12) 1px, transparent 1px)`,
+                          backgroundSize: "5px 5px",
+                        } : {}),
+                      }} />
+                      <span style={{ fontSize: 12, color: paper === p.id ? C.ink : C.inkMd, fontWeight: paper === p.id ? 700 : 400 }}>
+                        {p.label}
+                      </span>
+                      {paper === p.id && <span style={{ marginLeft: "auto", fontSize: 12 }}>✓</span>}
+                    </button>
+                  ))}
+                </div>
+
+                <Sep />
+                <SLbl>Zoom</SLbl>
+                <input type="range" min={0.3} max={1.5} step={0.05} value={zoom}
+                  onChange={e => setZoom(+e.target.value)}
+                  style={{ width: "100%", accentColor: C.accent }}
+                />
+                <p style={{ fontSize: 10, color: C.inkLt, marginTop: 4 }}>{Math.round(zoom * 100)}%</p>
+              </>}
+
+              {/* EXPORT */}
+              {activeTool === "export" && <>
+                <SLbl>ข้อความ</SLbl>
+                <textarea
+                  value={text}
+                  onChange={e => setText(e.target.value)}
+                  rows={7}
+                  placeholder="พิมพ์ข้อความที่นี่..."
+                  style={{
+                    width: "100%",
+                    border: `1px solid ${C.border}`,
+                    borderRadius: 9,
+                    padding: "10px 12px",
+                    fontSize: 13,
+                    fontFamily: "inherit",
+                    color: C.ink,
+                    background: "white",
+                    resize: "vertical",
+                    outline: "none",
+                    lineHeight: 1.6,
+                    marginBottom: 14,
+                  }}
+                />
+
+                <SLbl>Export ไฟล์</SLbl>
+                <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                  <ExBtn icon="🖼" label="Export PNG" sub="2× resolution"    color={C.blue}   onClick={exportPNG} loading={exporting === "png"} />
+                  <ExBtn icon={copied ? "✓" : "📋"} label="Copy Text" sub={copied ? "Copied!" : "คัดลอกข้อความ"} color={copied ? C.green : C.inkMd} onClick={copyText} />
+                  <ExBtn icon="📄" label="PDF"            sub="เร็ว ๆ นี้"      color={C.inkLt}  disabled />
+                  <ExBtn icon="🔤" label="Font File .ttf" sub="เร็ว ๆ นี้"      color={C.inkLt}  disabled />
+                </div>
+
+                <Sep />
+                <SLbl>Glyph Library ({Object.keys(glyphMap).length} ตัว)</SLbl>
+                <div style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 4,
+                  maxHeight: 148,
+                  overflowY: "auto",
+                  padding: 8,
+                  background: "#F0EDE6",
+                  borderRadius: 8,
+                }}>
+                  {Object.entries(glyphMap).map(([ch, g]) => (
+                    <div key={ch} title={ch} style={{
+                      width: 26, height: 26,
+                      border: `1px solid ${C.border}`,
+                      borderRadius: 5,
+                      background: "white",
+                      overflow: "hidden",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}>
+                      {g.preview
+                        ? <img src={g.preview} alt={ch} style={{ width: "82%", height: "82%", objectFit: "contain" }} />
+                        : <span style={{ fontSize: 11, color: C.inkMd, fontFamily: "serif" }}>{ch}</span>
+                      }
+                    </div>
+                  ))}
+                  {Object.keys(glyphMap).length === 0 && (
+                    <p style={{ fontSize: 11, color: C.inkLt, padding: "2px 0" }}>ยังไม่มี Glyphs</p>
+                  )}
+                </div>
+              </>}
+            </div>
+          </aside>
+        )}
+      </div>
+
+      {/* ── BOTTOM INPUT BAR ─────────────────────────────────────────── */}
+      <div style={{
+        height: 56,
+        background: C.toolbar,
+        borderTop: `1px solid ${C.border}`,
+        display: "flex",
+        alignItems: "center",
+        padding: "0 18px",
+        gap: 12,
+        flexShrink: 0,
+      }}>
+        <span style={{ fontSize: 11, color: C.inkMd, whiteSpace: "nowrap", userSelect: "none" }}>
+          ✍ พิมพ์
+        </span>
+        <textarea
+          value={text}
+          onChange={e => setText(e.target.value)}
+          rows={1}
+          placeholder="พิมพ์ข้อความ... กด Enter เพื่อขึ้นบรรทัดใหม่"
+          style={{
+            flex: 1,
+            border: `1px solid ${C.border}`,
+            borderRadius: 8,
+            padding: "8px 14px",
+            fontSize: 13,
+            fontFamily: "inherit",
+            color: C.ink,
+            background: "white",
+            resize: "none",
+            outline: "none",
+            lineHeight: 1.4,
+            transition: "border-color .15s",
+          }}
+          onFocus={e => e.target.style.borderColor = C.inkMd}
+          onBlur={e  => e.target.style.borderColor = C.border}
+        />
+        <span style={{ fontSize: 10, color: C.inkLt, whiteSpace: "nowrap" }}>
+          {text.replace(/\n/g, "").length} ตัว
+        </span>
+      </div>
     </div>
   )
 }
 
-function AlignmentButton({ active, onClick, label }) {
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+function TBtn({ children, onClick, active, title, disabled }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`inline-flex h-9 flex-1 items-center justify-center rounded-xl border text-xs font-semibold transition ${
-        active
-          ? "border-slate-900 bg-slate-900 text-white"
-          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50"
-      }`}
+    <button onClick={onClick} title={title} disabled={disabled} style={{
+      width: 28, height: 28,
+      border: `1px solid ${active ? C.ink : "transparent"}`,
+      borderRadius: 6,
+      background: active ? "#F0EDE6" : "transparent",
+      color: disabled ? C.inkLt : active ? C.ink : C.inkMd,
+      fontSize: 12,
+      cursor: disabled ? "default" : "pointer",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      fontFamily: "inherit",
+      transition: "all .1s",
+      flexShrink: 0,
+    }}
+      onMouseEnter={e => { if (!disabled && !active) e.currentTarget.style.background = "#F0EDE6" }}
+      onMouseLeave={e => { if (!active) e.currentTarget.style.background = "transparent" }}
+    >{children}</button>
+  )
+}
+
+function Div() {
+  return <div style={{ width: 1, height: 18, background: C.border, margin: "0 2px", flexShrink: 0 }} />
+}
+
+function Sep() {
+  return <div style={{ height: 1, background: C.border, margin: "12px 0" }} />
+}
+
+function SLbl({ children }) {
+  return <p style={{ fontSize: 10, fontWeight: 700, color: C.inkLt, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 7 }}>{children}</p>
+}
+
+function Dim({ children }) {
+  return <span style={{ fontWeight: 400, color: C.inkLt }}>{children}</span>
+}
+
+function MiniStat({ label, value, color }) {
+  return (
+    <div style={{ flex: 1, padding: "10px 8px", textAlign: "center" }}>
+      <p style={{ fontSize: 17, fontWeight: 700, color, lineHeight: 1 }}>{value}</p>
+      <p style={{ fontSize: 9, color: C.inkLt, marginTop: 3, letterSpacing: "0.04em" }}>{label}</p>
+    </div>
+  )
+}
+
+function PillBtn({ children, onClick }) {
+  return (
+    <button onClick={onClick} style={{
+      padding: "5px 12px",
+      border: `1px solid ${C.border}`,
+      borderRadius: 20,
+      background: "white",
+      fontSize: 11,
+      color: C.inkMd,
+      cursor: "pointer",
+      fontFamily: "inherit",
+      transition: "all .12s",
+    }}
+      onMouseEnter={e => { e.currentTarget.style.borderColor = C.ink; e.currentTarget.style.color = C.ink }}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.color = C.inkMd }}
+    >{children}</button>
+  )
+}
+
+function Toggle({ value, onChange }) {
+  return (
+    <div onClick={() => onChange(!value)} style={{
+      width: 38, height: 22,
+      borderRadius: 99,
+      background: value ? C.ink : C.border,
+      position: "relative",
+      cursor: "pointer",
+      transition: "background .2s",
+      flexShrink: 0,
+    }}>
+      <div style={{
+        position: "absolute",
+        top: 3, left: value ? 18 : 3,
+        width: 16, height: 16,
+        borderRadius: "50%",
+        background: "white",
+        boxShadow: "0 1px 3px rgba(0,0,0,.2)",
+        transition: "left .2s",
+      }} />
+    </div>
+  )
+}
+
+function ExBtn({ icon, label, sub, color, onClick, disabled, loading }) {
+  return (
+    <button onClick={!disabled ? onClick : undefined} disabled={disabled} style={{
+      display: "flex",
+      alignItems: "center",
+      gap: 10,
+      padding: "9px 13px",
+      border: `1px solid ${C.border}`,
+      borderRadius: 9,
+      background: disabled ? "#FAF9F6" : "white",
+      cursor: disabled ? "not-allowed" : "pointer",
+      fontFamily: "inherit",
+      textAlign: "left",
+      transition: "all .12s",
+      opacity: disabled ? 0.5 : 1,
+    }}
+      onMouseEnter={e => { if (!disabled) e.currentTarget.style.borderColor = C.inkMd }}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = C.border }}
     >
-      {label}
+      <span style={{ fontSize: 18, flexShrink: 0 }}>
+        {loading ? <span style={spinnerStyle} /> : icon}
+      </span>
+      <div>
+        <p style={{ fontSize: 12, fontWeight: 600, color: disabled ? C.inkLt : C.ink }}>{label}</p>
+        <p style={{ fontSize: 10, color, marginTop: 1 }}>{sub}</p>
+      </div>
     </button>
   )
 }
 
-export default function Step5({ versionedGlyphs = [], extractedGlyphs = [] }) {
-  const [historyState, dispatch] = useReducer(historyReducer, {
-    past: [],
-    present: { ...DEFAULT_DESIGN },
-    future: [],
-  })
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+const selectStyle = {
+  border: `1px solid ${C.border}`,
+  borderRadius: 6,
+  padding: "3px 4px",
+  fontSize: 12,
+  color: C.ink,
+  background: "white",
+  fontFamily: "inherit",
+  outline: "none",
+  width: 50,
+  textAlign: "center",
+}
 
-  const [zoom, setZoom] = useState(0.88)
-  const [pan, setPan] = useState({ x: 0, y: 0 })
-  const [savedStyles, setSavedStyles] = useState(() => loadSavedStyles())
-  const [styleNameDraft, setStyleNameDraft] = useState("")
-  const [fontState, setFontState] = useState({
-    status: "loading",
-    message: "Loading MyHandwriting.ttf/.woff...",
-  })
-  const [fontAssets, setFontAssets] = useState({
-    woffBuffer: null,
-    ttfBuffer: null,
-    sourceLabel: "",
-  })
+const exportBtnStyle = (loading) => ({
+  marginLeft: 4,
+  padding: "6px 14px",
+  background: C.ink,
+  color: "#fff",
+  border: "none",
+  borderRadius: 8,
+  fontSize: 12,
+  fontWeight: 600,
+  cursor: loading ? "wait" : "pointer",
+  fontFamily: "inherit",
+  display: "flex",
+  alignItems: "center",
+  gap: 5,
+  opacity: loading ? 0.65 : 1,
+  transition: "opacity .2s",
+  whiteSpace: "nowrap",
+  flexShrink: 0,
+})
 
-  const design = historyState.present
-  const stageRef = useRef(null)
-  const fontInputRef = useRef(null)
-  const fontBlobUrlsRef = useRef({ woffUrl: null, ttfUrl: null })
-
-  const setDesign = useCallback((patch, options = {}) => {
-    dispatch({
-      type: "set",
-      patch,
-      checkpoint: options.checkpoint ?? true,
-    })
-  }, [])
-
-  const canUndo = historyState.past.length > 0
-  const canRedo = historyState.future.length > 0
-
-  const pageSize = useMemo(() => resolvePageSize(design), [design])
-
-  const previewLines = useMemo(
-    () => buildPreviewLines(design.text, design),
-    [design]
-  )
-
-  const hasGlyphSource = versionedGlyphs.length > 0 || extractedGlyphs.length > 0
-  const glyphSourceLabel =
-    versionedGlyphs.length > 0
-      ? `Versioned glyphs (${versionedGlyphs.length})`
-      : `Extracted glyphs (${extractedGlyphs.length})`
-
-  const wordCount = useMemo(() => {
-    const trimmed = design.text.trim()
-    if (!trimmed) return 0
-    return trimmed.split(/\s+/).filter(Boolean).length
-  }, [design.text])
-  const charCount = design.text.length
-
-  const applyFontBuffers = useCallback(async ({ woffBuffer, ttfBuffer, sourceLabel }) => {
-    if (!woffBuffer && !ttfBuffer) return false
-
-    const oldUrls = fontBlobUrlsRef.current
-    if (oldUrls.woffUrl) URL.revokeObjectURL(oldUrls.woffUrl)
-    if (oldUrls.ttfUrl) URL.revokeObjectURL(oldUrls.ttfUrl)
-
-    const woffUrl = woffBuffer
-      ? URL.createObjectURL(new Blob([woffBuffer], { type: "font/woff" }))
-      : null
-    const ttfUrl = ttfBuffer
-      ? URL.createObjectURL(new Blob([ttfBuffer], { type: "font/ttf" }))
-      : null
-
-    const src = []
-    if (woffUrl) src.push(`url("${woffUrl}") format("woff")`)
-    if (ttfUrl) src.push(`url("${ttfUrl}") format("truetype")`)
-    if (src.length === 0) return false
-
-    let styleTag = document.getElementById(FONT_STYLE_ID)
-    if (!styleTag) {
-      styleTag = document.createElement("style")
-      styleTag.id = FONT_STYLE_ID
-      document.head.appendChild(styleTag)
-    }
-    styleTag.textContent = `@font-face{
-  font-family:"${FONT_FAMILY}";
-  src:${src.join(",")};
-  font-display:swap;
-  font-style:normal;
-  font-weight:100 900;
-}`
-
-    try {
-      await document.fonts.load(`48px "${FONT_FAMILY}"`)
-      await document.fonts.ready
-      fontBlobUrlsRef.current = { woffUrl, ttfUrl }
-      setFontAssets({ woffBuffer, ttfBuffer, sourceLabel })
-      return true
-    } catch {
-      if (woffUrl) URL.revokeObjectURL(woffUrl)
-      if (ttfUrl) URL.revokeObjectURL(ttfUrl)
-      return false
-    }
-  }, [])
-
-  useEffect(() => {
-    let cancelled = false
-
-    const bootstrap = async () => {
-      setFontState({
-        status: "loading",
-        message: "Loading MyHandwriting.ttf/.woff...",
-      })
-
-      const discovered = await discoverFontAssets()
-      if (cancelled) return
-
-      if (!discovered.woffBuffer && !discovered.ttfBuffer) {
-        setFontState({
-          status: "missing",
-          message: "MyHandwriting font not found. Upload .woff/.ttf from Step 4.",
-        })
-        return
-      }
-
-      const ok = await applyFontBuffers(discovered)
-      if (cancelled) return
-
-      if (ok) {
-        const sourceLabel = discovered.sourceLabel || "auto source"
-        setFontState({
-          status: "ready",
-          message: `MyHandwriting loaded (${sourceLabel})`,
-        })
-      } else {
-        setFontState({
-          status: "error",
-          message: "Failed to register MyHandwriting font.",
-        })
-      }
-    }
-
-    bootstrap()
-
-    return () => {
-      cancelled = true
-    }
-  }, [applyFontBuffers])
-
-  useEffect(() => {
-    return () => {
-      const urls = fontBlobUrlsRef.current
-      if (urls.woffUrl) URL.revokeObjectURL(urls.woffUrl)
-      if (urls.ttfUrl) URL.revokeObjectURL(urls.ttfUrl)
-    }
-  }, [])
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STYLE_STORAGE_KEY, JSON.stringify(savedStyles))
-    } catch {
-      // Ignore storage failures.
-    }
-  }, [savedStyles])
-
-  const drawCanvas = useCallback(
-    (transparent = false) =>
-      drawDesignToCanvas({
-        design,
-        previewLines,
-        pageSize,
-        transparent,
-      }),
-    [design, previewLines, pageSize]
-  )
-
-  const handleExportPng = useCallback(() => {
-    const canvas = drawCanvas(false)
-    canvas.toBlob((blob) => {
-      if (!blob) return
-      downloadBlob(blob, "MyHandwriting-preview.png")
-    }, "image/png")
-  }, [drawCanvas])
-
-  const handleExportTransparentPng = useCallback(() => {
-    const canvas = drawCanvas(true)
-    canvas.toBlob((blob) => {
-      if (!blob) return
-      downloadBlob(blob, "MyHandwriting-preview-transparent.png")
-    }, "image/png")
-  }, [drawCanvas])
-
-  const handleExportPdf = useCallback(() => {
-    const canvas = drawCanvas(false)
-    exportPdfFromCanvas(canvas, pageSize.label)
-  }, [drawCanvas, pageSize.label])
-
-  const handleDownloadFont = useCallback(() => {
-    if (!fontAssets.woffBuffer && !fontAssets.ttfBuffer) {
-      setFontState({
-        status: "missing",
-        message: "No font buffer loaded yet. Import MyHandwriting.ttf/.woff first.",
-      })
-      return
-    }
-
-    if (fontAssets.woffBuffer) {
-      downloadArrayBuffer(fontAssets.woffBuffer, "MyHandwriting.woff", "font/woff")
-    }
-    if (fontAssets.ttfBuffer) {
-      setTimeout(() => {
-        downloadArrayBuffer(fontAssets.ttfBuffer, "MyHandwriting.ttf", "font/ttf")
-      }, fontAssets.woffBuffer ? 180 : 0)
-    }
-  }, [fontAssets])
-
-  const handleSaveDesignJson = useCallback(() => {
-    const payload = {
-      version: DESIGN_FILE_VERSION,
-      savedAt: new Date().toISOString(),
-      pageSize,
-      glyphSource: {
-        versioned: versionedGlyphs.length,
-        extracted: extractedGlyphs.length,
-      },
-      design,
-    }
-    downloadBlob(
-      new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }),
-      "MyHandwriting-design.json"
-    )
-  }, [design, pageSize, versionedGlyphs.length, extractedGlyphs.length])
-
-  const handleToggleFullscreen = useCallback(async () => {
-    const node = stageRef.current
-    if (!node) return
-    try {
-      if (document.fullscreenElement) {
-        await document.exitFullscreen()
-      } else if (node.requestFullscreen) {
-        await node.requestFullscreen()
-      }
-    } catch {
-      // Ignore fullscreen errors.
-    }
-  }, [])
-
-  const handleUploadFonts = useCallback(async (event) => {
-    const files = Array.from(event.target.files ?? [])
-    if (files.length === 0) return
-
-    setFontState({
-      status: "loading",
-      message: "Importing selected font files...",
-    })
-
-    let woffBuffer = null
-    let ttfBuffer = null
-    for (const file of files) {
-      const lower = file.name.toLowerCase()
-      if (!lower.endsWith(".woff") && !lower.endsWith(".ttf")) continue
-      const buffer = await file.arrayBuffer()
-      if (lower.endsWith(".woff")) woffBuffer = buffer
-      if (lower.endsWith(".ttf")) ttfBuffer = buffer
-    }
-
-    if (!woffBuffer && !ttfBuffer) {
-      setFontState({
-        status: "error",
-        message: "Only .woff or .ttf files are supported.",
-      })
-      event.target.value = ""
-      return
-    }
-
-    const sourceLabel = files.map((file) => file.name).join(", ")
-    const ok = await applyFontBuffers({ woffBuffer, ttfBuffer, sourceLabel })
-    if (ok) {
-      setFontState({
-        status: "ready",
-        message: `MyHandwriting loaded (${sourceLabel})`,
-      })
-    } else {
-      setFontState({
-        status: "error",
-        message: "Failed to register the selected font files.",
-      })
-    }
-    event.target.value = ""
-  }, [applyFontBuffers])
-
-  const applyTemplate = (template) => {
-    setDesign({
-      text: template.text,
-      seed: design.seed + 1,
-    })
-  }
-
-  const applyPreset = (preset) => {
-    setDesign({
-      ...preset.patch,
-      seed: design.seed + 1,
-    })
-  }
-
-  const saveCurrentStyle = () => {
-    const name = styleNameDraft.trim() || `Style ${savedStyles.length + 1}`
-    const style = pickStyle(design)
-    const nextStyle = { id: makeStyleId(), name, style }
-    setSavedStyles((prev) => [nextStyle, ...prev].slice(0, 14))
-    setStyleNameDraft("")
-  }
-
-  const applySavedStyle = (item) => {
-    if (!item?.style) return
-    setDesign({
-      ...item.style,
-      seed: design.seed + 1,
-    })
-  }
-
-  const removeSavedStyle = (id) => {
-    setSavedStyles((prev) => prev.filter((item) => item.id !== id))
-  }
-
-  const clearText = () => {
-    setDesign({
-      text: "",
-      seed: design.seed + 1,
-    })
-  }
-
-  return (
-    <div ref={stageRef} className="step5-smart flex h-full min-h-[640px] flex-col gap-3 bg-transparent p-3 md:p-4">
-      <Step5Toolbar
-        canUndo={canUndo}
-        canRedo={canRedo}
-        onUndo={() => dispatch({ type: "undo" })}
-        onRedo={() => dispatch({ type: "redo" })}
-        onReset={() => dispatch({ type: "reset" })}
-        onExportPng={handleExportPng}
-        onExportTransparentPng={handleExportTransparentPng}
-        onExportPdf={handleExportPdf}
-        onDownloadFont={handleDownloadFont}
-        onSaveDesignJson={handleSaveDesignJson}
-        onToggleFullscreen={handleToggleFullscreen}
-        fontState={fontState}
-      />
-
-      <input
-        ref={fontInputRef}
-        type="file"
-        accept=".woff,.ttf,font/woff,font/ttf"
-        multiple
-        className="hidden"
-        onChange={handleUploadFonts}
-      />
-
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 xl:grid-cols-[330px_minmax(0,1fr)] 2xl:grid-cols-[330px_minmax(0,1fr)_330px]">
-        <aside className="step5-scroll flex min-h-0 flex-col gap-3 overflow-y-auto pb-1">
-          <SidebarCard title="Quick Start" subtitle="Use this 3-step flow like Canva">
-            <div className="space-y-2">
-              {[
-                "พิมพ์ข้อความหรือเลือก Template",
-                "เลือก Preset แล้วปรับสไตล์หลัก",
-                "Export PNG/PDF จากแถบด้านบน",
-              ].map((step, idx) => (
-                <div key={step} className="flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-2">
-                  <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-900 text-[11px] font-bold text-white">
-                    {idx + 1}
-                  </span>
-                  <span className="text-xs font-medium text-slate-600">{step}</span>
-                </div>
-              ))}
-            </div>
-          </SidebarCard>
-
-          <SidebarCard title="1) Text" subtitle="Thai / English / Number / Symbol / Multiline">
-            <textarea
-              value={design.text}
-              onChange={(event) => setDesign({ text: event.target.value })}
-              className="min-h-[200px] w-full resize-y rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-slate-400"
-              placeholder="Type your message..."
-            />
-            <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-slate-500">
-              <span>Words: {wordCount}</span>
-              <span className="text-right">Chars: {charCount}</span>
-            </div>
-            <div className="mt-2 grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={clearText}
-                disabled={charCount === 0}
-                className="h-9 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-300"
-              >
-                Clear Text
-              </button>
-              <button
-                type="button"
-                onClick={() => setDesign({ seed: design.seed + 1 })}
-                className="h-9 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
-              >
-                Shuffle Feel
-              </button>
-            </div>
-          </SidebarCard>
-
-          <SidebarCard title="2) Templates" subtitle="Start quickly with ready-made text">
-            <div className="grid gap-2">
-              {TEMPLATE_ITEMS.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => applyTemplate(item)}
-                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
-                >
-                  {item.name}
-                </button>
-              ))}
-            </div>
-          </SidebarCard>
-
-          <SidebarCard title="3) Presets" subtitle="One click look presets">
-            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
-              {STYLE_PRESETS.map((preset) => (
-                <button
-                  key={preset.id}
-                  type="button"
-                  onClick={() => applyPreset(preset)}
-                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
-                >
-                  {preset.name}
-                </button>
-              ))}
-            </div>
-          </SidebarCard>
-
-          <SidebarCard title="Saved Styles" subtitle="Reuse your own favorite setup">
-            <div className="mb-2 flex gap-2">
-              <input
-                type="text"
-                value={styleNameDraft}
-                onChange={(event) => setStyleNameDraft(event.target.value)}
-                placeholder="Style name"
-                className="h-9 flex-1 rounded-xl border border-slate-200 px-3 text-xs font-medium text-slate-700 outline-none transition focus:border-slate-400"
-              />
-              <button
-                type="button"
-                onClick={saveCurrentStyle}
-                className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
-              >
-                Save
-              </button>
-            </div>
-            <div className="grid gap-2">
-              {savedStyles.length === 0 ? (
-                <p className="rounded-xl border border-dashed border-slate-200 px-3 py-3 text-xs text-slate-500">
-                  No saved styles yet.
-                </p>
-              ) : (
-                savedStyles.map((item) => (
-                  <div key={item.id} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white p-2">
-                    <button
-                      type="button"
-                      onClick={() => applySavedStyle(item)}
-                      className="flex-1 rounded-lg px-2 py-1 text-left text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
-                    >
-                      {item.name}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => removeSavedStyle(item.id)}
-                      className="rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-500 transition hover:border-slate-300 hover:bg-slate-50"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-          </SidebarCard>
-        </aside>
-
-        <div className="min-h-0 flex flex-col gap-3">
-          <Step5Preview
-            design={design}
-            setDesign={setDesign}
-            pageSize={pageSize}
-            previewLines={previewLines}
-            zoom={zoom}
-            setZoom={setZoom}
-            pan={pan}
-            setPan={setPan}
-            fontState={fontState}
-            onToggleFullscreen={handleToggleFullscreen}
-          />
-
-          <section className="step5-card rounded-2xl border border-white/70 bg-white/80 p-3 text-xs text-slate-600 shadow-sm">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded-full bg-slate-100 px-2 py-1 font-semibold text-slate-600">
-                Glyph Source: {hasGlyphSource ? glyphSourceLabel : "No glyphs yet"}
-              </span>
-              <span className="rounded-full bg-slate-100 px-2 py-1 font-semibold text-slate-600">
-                Size: {pageSize.width} x {pageSize.height}
-              </span>
-              <span className="rounded-full bg-slate-100 px-2 py-1 font-semibold text-slate-600">
-                Zoom: {Math.round(zoom * 100)}%
-              </span>
-              <div className="ml-auto rounded-full bg-slate-900 px-2 py-1 font-semibold text-white">
-                Ready to export
-              </div>
-            </div>
-          </section>
-        </div>
-
-        <aside className="step5-scroll flex min-h-0 flex-col gap-3 overflow-y-auto pb-1 xl:col-span-2 2xl:col-span-1">
-          <SidebarCard title="Basic Controls" subtitle="Fast controls for everyday use">
-            <div className="space-y-3">
-              <div>
-                <FieldLabel value={`${design.fontSize}px`}>Font Size</FieldLabel>
-                <input
-                  type="range"
-                  min={24}
-                  max={140}
-                  step={1}
-                  value={design.fontSize}
-                  onChange={(event) => setDesign({ fontSize: Number(event.target.value) })}
-                  className="w-full accent-slate-700"
-                />
-              </div>
-
-              <div>
-                <FieldLabel value={design.lineHeight.toFixed(2)}>Line Height</FieldLabel>
-                <input
-                  type="range"
-                  min={0.85}
-                  max={2.2}
-                  step={0.01}
-                  value={design.lineHeight}
-                  onChange={(event) => setDesign({ lineHeight: Number(event.target.value) })}
-                  className="w-full accent-slate-700"
-                />
-              </div>
-
-              <div>
-                <FieldLabel value={design.textColor}>Text Color</FieldLabel>
-                <input
-                  type="color"
-                  value={design.textColor}
-                  onChange={(event) => setDesign({ textColor: event.target.value })}
-                  className="h-9 w-full cursor-pointer rounded-xl border border-slate-200 bg-white p-1"
-                />
-              </div>
-
-              <div>
-                <FieldLabel value={design.letterSpacing.toFixed(2)}>Letter Spacing</FieldLabel>
-                <input
-                  type="range"
-                  min={-1}
-                  max={4}
-                  step={0.01}
-                  value={design.letterSpacing}
-                  onChange={(event) => setDesign({ letterSpacing: Number(event.target.value) })}
-                  className="w-full accent-slate-700"
-                />
-              </div>
-
-              <div>
-                <FieldLabel value={`${Math.round(design.opacity * 100)}%`}>Opacity</FieldLabel>
-                <input
-                  type="range"
-                  min={0.15}
-                  max={1}
-                  step={0.01}
-                  value={design.opacity}
-                  onChange={(event) => setDesign({ opacity: Number(event.target.value) })}
-                  className="w-full accent-slate-700"
-                />
-              </div>
-
-              <div>
-                <FieldLabel>Alignment</FieldLabel>
-                <div className="flex gap-2">
-                  <AlignmentButton
-                    label="Left"
-                    active={design.alignment === "left"}
-                    onClick={() => setDesign({ alignment: "left" })}
-                  />
-                  <AlignmentButton
-                    label="Center"
-                    active={design.alignment === "center"}
-                    onClick={() => setDesign({ alignment: "center" })}
-                  />
-                  <AlignmentButton
-                    label="Right"
-                    active={design.alignment === "right"}
-                    onClick={() => setDesign({ alignment: "right" })}
-                  />
-                  <AlignmentButton
-                    label="Justify"
-                    active={design.alignment === "justify"}
-                    onClick={() => setDesign({ alignment: "justify" })}
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setDesign({ boldMock: !design.boldMock })}
-                  className={`h-9 rounded-xl border text-xs font-semibold transition ${
-                    design.boldMock
-                      ? "border-slate-900 bg-slate-900 text-white"
-                      : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50"
-                  }`}
-                >
-                  Bold Mock
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDesign({ italicMock: !design.italicMock })}
-                  className={`h-9 rounded-xl border text-xs font-semibold transition ${
-                    design.italicMock
-                      ? "border-slate-900 bg-slate-900 text-white"
-                      : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50"
-                  }`}
-                >
-                  Italic Mock
-                </button>
-              </div>
-            </div>
-          </SidebarCard>
-
-          <SidebarCard title="Advanced Controls" subtitle="Tune natural handwriting behavior">
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setDesign({ baselineWobble: !design.baselineWobble })}
-                  className={`h-9 rounded-xl border text-xs font-semibold transition ${
-                    design.baselineWobble
-                      ? "border-emerald-500 bg-emerald-50 text-emerald-700"
-                      : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50"
-                  }`}
-                >
-                  Baseline Wobble
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDesign({ seed: design.seed + 1 })}
-                  className="h-9 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
-                >
-                  Shuffle Variants
-                </button>
-              </div>
-
-              <div>
-                <FieldLabel value={`${Math.round(design.randomness)}%`}>Randomness Intensity</FieldLabel>
-                <input
-                  type="range"
-                  min={0}
-                  max={100}
-                  step={1}
-                  value={design.randomness}
-                  onChange={(event) => setDesign({ randomness: Number(event.target.value) })}
-                  className="w-full accent-slate-700"
-                />
-              </div>
-
-              <div>
-                <FieldLabel value={`${design.padding}px`}>Page Padding</FieldLabel>
-                <input
-                  type="range"
-                  min={32}
-                  max={180}
-                  step={1}
-                  value={design.padding}
-                  onChange={(event) => setDesign({ padding: Number(event.target.value) })}
-                  className="w-full accent-slate-700"
-                />
-              </div>
-            </div>
-          </SidebarCard>
-
-          <SidebarCard title="Font & Assets" subtitle="Connect font from Step 4 and save artifacts">
-            <div className="space-y-2 text-xs text-slate-600">
-              <p>
-                Auto search paths:
-                <br />
-                <code className="rounded bg-slate-100 px-1 py-0.5 text-[11px]">/MyHandwriting.woff</code>
-                {" · "}
-                <code className="rounded bg-slate-100 px-1 py-0.5 text-[11px]">/MyHandwriting.ttf</code>
-              </p>
-              <button
-                type="button"
-                onClick={() => fontInputRef.current?.click()}
-                className="h-9 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
-                >
-                  Upload MyHandwriting Files
-                </button>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={handleDownloadFont}
-                    className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
-                  >
-                    Download Font
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleSaveDesignJson}
-                    className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
-                  >
-                    Save JSON
-                  </button>
-                </div>
-              <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-500">
-                {fontState.message}
-              </p>
-            </div>
-          </SidebarCard>
-        </aside>
-      </div>
-    </div>
-  )
+const spinnerStyle = {
+  display: "inline-block",
+  width: 12,
+  height: 12,
+  border: "2px solid rgba(255,255,255,.3)",
+  borderTopColor: "#fff",
+  borderRadius: "50%",
+  animation: "spin .7s linear infinite",
+  verticalAlign: "middle",
 }
