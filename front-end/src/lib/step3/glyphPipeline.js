@@ -115,7 +115,8 @@ export function getPageCapacity(pageHeight, startY, cellSize, gap) {
 }
 
 // ───────────────────────────────────────────────────────────────
-// SVG Tracing: แปลง inkCanvas → SVG path โดยไม่ต้องใช้ library
+// SVG Tracing: แปลง inkCanvas → SVG path
+// ใช้ column-based filled outline ที่ reliable และ font-valid
 // ───────────────────────────────────────────────────────────────
 function traceToSVGPath(inkCanvas, width, height) {
   try {
@@ -126,14 +127,12 @@ function traceToSVGPath(inkCanvas, width, height) {
     const { data } = imageData
 
     // Build ink mask
-    const threshold = 180
     const mask = new Uint8Array(width * height)
     for (let i = 0; i < width * height; i++) {
       const idx = i * 4
-      const a = data[idx + 3]
-      if (a < 50) continue
+      if (data[idx + 3] < 50) continue
       const lum = data[idx] * 0.2126 + data[idx + 1] * 0.7152 + data[idx + 2] * 0.0722
-      if (lum < threshold) mask[i] = 1
+      if (lum < 180) mask[i] = 1
     }
 
     const inkCount = mask.reduce((s, v) => s + v, 0)
@@ -143,7 +142,7 @@ function traceToSVGPath(inkCanvas, width, height) {
     let bxMin = width, bxMax = 0, byMin = height, byMax = 0
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
-        if (mask[y * width + x] === 1) {
+        if (mask[y * width + x]) {
           if (x < bxMin) bxMin = x
           if (x > bxMax) bxMax = x
           if (y < byMin) byMin = y
@@ -151,50 +150,75 @@ function traceToSVGPath(inkCanvas, width, height) {
         }
       }
     }
-    const bw = bxMax - bxMin || 1
-    const bh = byMax - byMin || 1
+    const bw = Math.max(bxMax - bxMin, 1)
+    const bh = Math.max(byMax - byMin, 1)
 
-    // Normalize ink bbox → 5..95 in 0-100 viewBox
     const PAD = 5
     const nx = x => PAD + ((x - bxMin) / bw) * (100 - PAD * 2)
     const ny = y => PAD + ((y - byMin) / bh) * (100 - PAD * 2)
 
-    // Sample step — balance detail vs path size
-    const STEP = Math.max(1, Math.floor(Math.min(width, height) / 60))
-    // Stroke thickness in normalized units (gives filled rectangles)
-    const strokeH = Math.max(0.8, (STEP / bh) * 90)
+    // Downsample factor for performance
+    const factor = Math.max(1, Math.floor(Math.min(width, height) / 64))
 
+    // For each column, find min/max ink y — build vertical profile
+    // Then emit one tall filled rect per contiguous ink column group
     const pathCmds = []
 
-    // For each row of ink runs, emit a filled rectangle (closed polygon)
-    for (let y = byMin; y <= byMax; y += STEP) {
-      const runs = []
+    // Scan column by column in downsampled space
+    const colStep = factor
+    const rowStep = factor
+
+    // Collect ink spans per row (downsampled)
+    for (let y = byMin; y <= byMax; y += rowStep) {
+      // Find ink runs in this row
       let inRun = false, runStart = 0
-      for (let x = bxMin; x <= bxMax + 1; x++) {
-        const isInk = x <= bxMax && mask[y * width + x] === 1
-        if (isInk && !inRun) { inRun = true; runStart = x }
-        else if (!isInk && inRun) {
-          inRun = false
-          runs.push({ start: runStart, end: x - 1 })
+      let inkTop = y, inkBottom = Math.min(y + rowStep - 1, byMax)
+
+      // Expand vertically: find actual ink extent in this band
+      let bandTop = byMax, bandBot = byMin
+      for (let dy = y; dy < Math.min(y + rowStep, byMax + 1); dy++) {
+        for (let x = bxMin; x <= bxMax; x++) {
+          if (mask[dy * width + x]) {
+            if (dy < bandTop) bandTop = dy
+            if (dy > bandBot) bandBot = dy
+          }
         }
       }
+      if (bandTop > bandBot) continue
 
-      for (const run of runs) {
-        const x1 = nx(run.start).toFixed(2)
-        const x2 = nx(run.end + 1).toFixed(2)
-        const y1 = ny(y).toFixed(2)
-        const y2 = (ny(y) + strokeH).toFixed(2)
-        // Closed filled rectangle: M x1 y1 L x2 y1 L x2 y2 L x1 y2 Z
-        pathCmds.push(`M ${x1} ${y1} L ${x2} ${y1} L ${x2} ${y2} L ${x1} ${y2} Z`)
+      for (let x = bxMin; x <= bxMax + colStep; x += colStep) {
+        // Check if any ink in this column band
+        let hasInk = false
+        for (let dx = x; dx < Math.min(x + colStep, bxMax + 1); dx++) {
+          for (let dy = y; dy < Math.min(y + rowStep, byMax + 1); dy++) {
+            if (dx < width && dy < height && mask[dy * width + dx]) {
+              hasInk = true
+              break
+            }
+          }
+          if (hasInk) break
+        }
+
+        if (hasInk && !inRun) {
+          inRun = true
+          runStart = x
+        } else if (!hasInk && inRun) {
+          inRun = false
+          // Emit filled rect for this run
+          const x1 = nx(runStart).toFixed(1)
+          const x2 = nx(Math.min(x, bxMax + 1)).toFixed(1)
+          const y1 = ny(bandTop).toFixed(1)
+          const y2 = ny(bandBot + 1).toFixed(1)
+          if (x1 !== x2 && y1 !== y2) {
+            pathCmds.push(`M ${x1} ${y1} L ${x2} ${y1} L ${x2} ${y2} L ${x1} ${y2} Z`)
+          }
+        }
       }
     }
 
     if (pathCmds.length === 0) return null
 
-    return {
-      path: pathCmds.join(" "),
-      viewBox: "0 0 100 100",
-    }
+    return { path: pathCmds.join(" "), viewBox: "0 0 100 100" }
   } catch {
     return null
   }
