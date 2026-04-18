@@ -338,7 +338,7 @@ function InstallGuidePanel({ fontName }) {
 
 // ─── Main component ────────────────────────────────────────────────────────────
 
-export default function Step4({ glyphs = [] }) {
+export default function Step4({ glyphs = [], onFontReady }) {
   const [buildState,   setBuildState]   = useState('idle')
   const [progress,     setProgress]     = useState({ pct: 0, label: '' })
   const [buildResult,  setBuildResult]  = useState(null)
@@ -364,6 +364,22 @@ export default function Step4({ glyphs = [] }) {
   useEffect(() => {
     if (entries.length > 0 && !previewChar) setPreviewChar(entries[0][0])
   }, [entries])
+
+  // ── Auto-build เมื่อ glyphs พร้อม และยังไม่เคย build ─────────────────────
+  // ทำให้ Step 5 ได้ font ทันทีแม้ user ไม่เคยเข้า Step 4 เลย
+  useEffect(() => {
+    if (hasGlyphs && buildState === 'idle') {
+      handleBuild()
+    }
+  }, [hasGlyphs]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Re-fire onFontReady เมื่อ component mount กลับมา และ build เสร็จแล้ว ─
+  // กรณี user navigate Step4 → Step5 → Step4 → Step5 โดยไม่ build ใหม่
+  useEffect(() => {
+    if (buildState === 'done' && buildResult?.ttfBuffer) {
+      onFontReady?.(buildResult.ttfBuffer)
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const previewData = useMemo(() => {
     if (!previewChar || !glyphMap.has(previewChar)) return null
@@ -416,6 +432,9 @@ export default function Step4({ glyphs = [] }) {
         featureStatus: fStatus,
       })
       setBuildState('done')
+
+      // ── แจ้ง App ว่า font พร้อมแล้ว → Step 5 จะ inject @font-face ทันที ──
+      onFontReady?.(ttfBuffer)
     } catch (err) {
       console.error('[Step4] Font build failed:', err)
       setErrorMsg(err.message || 'Unknown compilation error')

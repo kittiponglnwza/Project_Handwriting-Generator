@@ -54,9 +54,12 @@ const A4W    = 794
 const A4H    = 1123
 const MARGIN = 64
 
-export default function Step5({ versionedGlyphs = [], extractedGlyphs = [] }) {
+const FONT_FAMILY  = 'MyHandwriting'
+const STYLE_TAG_ID = 'my-handwriting-font-face'
 
-  // ── Build lookup: char → glyph ──────────────────────────────────────────
+export default function Step5({ versionedGlyphs = [], extractedGlyphs = [], ttfBuffer = null }) {
+
+  // ── Build lookup: char → glyph (ใช้สำหรับ missing chars เท่านั้น) ──────
   const glyphMap = useMemo(() => {
     const map = {}
     extractedGlyphs.forEach(g => {
@@ -64,6 +67,59 @@ export default function Step5({ versionedGlyphs = [], extractedGlyphs = [] }) {
     })
     return map
   }, [extractedGlyphs])
+
+  // ── Font injection: 'idle' | 'loading' | 'ready' | 'error' ──────────────
+  const [fontStatus, setFontStatus] = useState('idle')
+  const fontUrlRef = useRef(null)
+
+  useEffect(() => {
+    if (!ttfBuffer) {
+      setFontStatus('idle')
+      return
+    }
+
+    setFontStatus('loading')
+
+    // Revoke URL เก่าก่อน
+    if (fontUrlRef.current) {
+      URL.revokeObjectURL(fontUrlRef.current)
+      fontUrlRef.current = null
+    }
+
+    const blob = new Blob([ttfBuffer], { type: 'font/ttf' })
+    const url  = URL.createObjectURL(blob)
+    fontUrlRef.current = url
+
+    // Inject @font-face ผ่าน <style> tag
+    let styleEl = document.getElementById(STYLE_TAG_ID)
+    if (!styleEl) {
+      styleEl = document.createElement('style')
+      styleEl.id = STYLE_TAG_ID
+      document.head.appendChild(styleEl)
+    }
+    styleEl.textContent = [
+      `@font-face {`,
+      `  font-family: '${FONT_FAMILY}';`,
+      `  src: url('${url}') format('truetype');`,
+      `  font-weight: normal;`,
+      `  font-style: normal;`,
+      `  font-display: block;`,
+      `}`,
+    ].join('\n')
+
+    // FontFace API: รู้ว่า load เสร็จจริงๆ แล้ว set ready
+    const ff = new FontFace(FONT_FAMILY, `url('${url}')`)
+    ff.load()
+      .then(loaded => { document.fonts.add(loaded); setFontStatus('ready') })
+      .catch(err   => { console.error('[Step5] font load failed:', err); setFontStatus('error') })
+
+    return () => {
+      if (fontUrlRef.current) {
+        URL.revokeObjectURL(fontUrlRef.current)
+        fontUrlRef.current = null
+      }
+    }
+  }, [ttfBuffer])
 
   // ── Editor state ─────────────────────────────────────────────────────────
   const [text, setText]         = useState("สวัสดีชาวโลก\nนี่คือลายมือของฉัน")
@@ -107,69 +163,53 @@ export default function Step5({ versionedGlyphs = [], extractedGlyphs = [] }) {
     setExp(null)
   }, [])
 
-  // ── Render one line of handwriting ────────────────────────────────────────
-  const renderLine = useCallback((line, li) => {
-    if (line === "") return <div key={li} style={{ height: fontSize * lineHeight * zoom * 0.6 }} />
-    return (
-      <div key={li} style={{
-        display: "flex",
-        flexWrap: "wrap",
-        alignItems: "flex-end",
-        justifyContent:
-          textAlign === "center" ? "center"
-          : textAlign === "right" ? "flex-end"
-          : "flex-start",
-        marginBottom: fontSize * lineHeight * zoom * 0.18,
-        gap: fontSize * letterSp * zoom,
-        minHeight: fontSize * zoom * 1.1,
-      }}>
-        {[...line].map((ch, ci) => {
-          if (ch === " ") {
-            return <span key={ci} style={{ display: "inline-block", width: fontSize * 0.4 * zoom }} />
-          }
-          const glyph = glyphMap[ch]
-          if (glyph?.preview && !signMode) {
-            return (
-              <img
-                key={ci}
-                src={glyph.preview}
-                alt={ch}
-                draggable={false}
-                style={{
-                  height: fontSize * zoom,
-                  width: "auto",
-                  objectFit: "contain",
-                  objectPosition: "bottom",
-                  verticalAlign: "bottom",
-                  display: "inline-block",
-                  userSelect: "none",
-                  filter: isDark ? "invert(1)" : "none",
-                }}
-              />
-            )
-          }
-          return (
-            <span key={ci} style={{
-              fontSize: fontSize * zoom,
-              fontFamily: "Georgia, 'Noto Serif Thai', serif",
-              color: isDark ? "rgba(255,255,255,.85)" : C.ink,
-              lineHeight: 1,
-              display: "inline-block",
-              verticalAlign: "bottom",
-              opacity: glyph ? 1 : 0.28,
-            }}>{ch}</span>
-          )
-        })}
-      </div>
-    )
-  }, [glyphMap, fontSize, lineHeight, letterSp, textAlign, zoom, isDark, signMode])
+  // ── Font family string: ใช้ MyHandwriting ถ้า ready, fallback เป็น system ──
+  const activeFontFamily = fontStatus === 'ready'
+    ? `'${FONT_FAMILY}', 'Noto Sans Thai', 'TH Sarabun New', sans-serif`
+    : `'Noto Sans Thai', 'TH Sarabun New', Tahoma, sans-serif`
 
-  const lines = text.split("\n")
+  // ── Text style สำหรับ <div> หลัก — browser shaping เอง ──────────────────
+  // ไม่ต้องทำ renderLine ทีละ char อีกต่อไป
+  // browser + HarfBuzz จัดการ Thai cluster combining ครบ
+  const textStyle = useMemo(() => ({
+    fontFamily:          activeFontFamily,
+    fontSize:            `${fontSize * zoom}px`,
+    lineHeight:          lineHeight,
+    letterSpacing:       `${letterSp}em`,
+    color:               isDark ? 'rgba(255,255,255,.88)' : C.ink,
+    textAlign:           textAlign,
+    whiteSpace:          'pre-wrap',
+    wordBreak:           'break-word',
+    overflowWrap:        'anywhere',
+    fontKerning:         'normal',
+    fontFeatureSettings: '"salt" 1, "calt" 1, "liga" 1',
+    textRendering:       'optimizeLegibility',
+    WebkitFontSmoothing: 'antialiased',
+    MozOsxFontSmoothing: 'grayscale',
+    // italic/bold mock ยังทำได้ผ่าน transform/shadow
+    ...(signMode ? { fontStyle: 'italic' } : {}),
+  }), [activeFontFamily, fontSize, zoom, lineHeight, letterSp, isDark, textAlign, signMode])
 
-  // ── Missing chars ─────────────────────────────────────────────────────────
-  const missingChars = useMemo(() =>
-    [...new Set([...text.replace(/[\n ]/g, "")].filter(c => !glyphMap[c]))]
-  , [text, glyphMap])
+  // ── Missing chars (ตัวที่ไม่มีใน font) ──────────────────────────────────
+  const missingChars = useMemo(() => {
+    if (fontStatus !== 'ready') return []
+    return [...new Set([...text.replace(/[\n ]/g, '')].filter(c => !glyphMap[c]))]
+  }, [text, glyphMap, fontStatus])
+
+  // ── Font status bar label ─────────────────────────────────────────────────
+  const fontStatusLabel = {
+    idle:    '⏳ รอ compile font จาก Step 4',
+    loading: '⏳ กำลังโหลด font…',
+    ready:   `✓ MyHandwriting (${Object.keys(glyphMap).length} glyphs)`,
+    error:   '⚠ โหลด font ไม่สำเร็จ — ใช้ system font แทน',
+  }[fontStatus]
+
+  const fontStatusColor = {
+    idle:    C.inkLt,
+    loading: C.amber,
+    ready:   C.green,
+    error:   C.red,
+  }[fontStatus]
 
   // ─────────────────────────────────────────────────────────────────────────
   return (
@@ -263,6 +303,29 @@ export default function Step5({ versionedGlyphs = [], extractedGlyphs = [] }) {
         </button>
       </div>
 
+      {/* ── FONT STATUS BAR ──────────────────────────────────────────── */}
+      <div style={{
+        height: 28,
+        background: fontStatus === 'ready' ? '#F0FAF4' : fontStatus === 'error' ? '#FEF2F2' : '#FAFAF9',
+        borderBottom: `1px solid ${C.border}`,
+        display: "flex",
+        alignItems: "center",
+        padding: "0 16px",
+        gap: 6,
+        flexShrink: 0,
+        transition: "background .3s",
+      }}>
+        <span style={{ fontSize: 10, fontWeight: 600, color: fontStatusColor, letterSpacing: "0.03em" }}>
+          {fontStatus === 'loading' && <span style={{ ...spinnerStyle, borderTopColor: C.amber, borderColor: 'rgba(0,0,0,.15)' }} />}
+          {' '}{fontStatusLabel}
+        </span>
+        {fontStatus === 'idle' && (
+          <span style={{ fontSize: 10, color: C.inkLt }}>
+            — ไปที่ Step 4 แล้วกด "Build Font" ก่อน
+          </span>
+        )}
+      </div>
+
       {/* ── BODY ─────────────────────────────────────────────────────── */}
       <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
 
@@ -309,9 +372,9 @@ export default function Step5({ versionedGlyphs = [], extractedGlyphs = [] }) {
               } : {}),
             }}
           >
-            {/* Rendered handwriting */}
+            {/* ── Handwriting text — browser shaping ครบ, Thai marks ถูกต้อง ── */}
             <div style={{ position: "relative", zIndex: 1 }}>
-              {lines.map(renderLine)}
+              <div style={textStyle}>{text}</div>
             </div>
 
             {/* Page number */}
@@ -440,7 +503,7 @@ export default function Step5({ versionedGlyphs = [], extractedGlyphs = [] }) {
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
                   <div>
                     <p style={{ fontSize: 12, fontWeight: 500, color: C.ink }}>Signature Mode</p>
-                    <p style={{ fontSize: 10, color: C.inkLt, marginTop: 2 }}>แสดงแบบ serif แทน glyph</p>
+                    <p style={{ fontSize: 10, color: C.inkLt, marginTop: 2 }}>เพิ่ม italic slant ให้ข้อความ</p>
                   </div>
                   <Toggle value={signMode} onChange={setSign} />
                 </div>

@@ -46,6 +46,7 @@ const INITIAL_STATE = {
   parsedFile: null,    // { file, characters, charSource, metadata, pages, status }
   glyphResult: null,   // { glyphs, tracedGlyphs, validationStatus }
   versionedGlyphs: [],
+  ttfBuffer: null,     // ArrayBuffer จาก compileFontBuffer ใน Step 4 → ใช้ใน Step 5
 }
 
 export default function App() {
@@ -86,6 +87,11 @@ export default function App() {
 
   const handleClearPdf = () => {
     setAppState(INITIAL_STATE)
+  }
+
+  // ─── Step 4 handler: รับ TTF buffer หลัง compile เสร็จ ──────────────────
+  const handleFontReady = (ttfBuffer) => {
+    setAppState(prev => ({ ...prev, ttfBuffer }))
   }
 
   // ─── Step 3 handler ───────────────────────────────────────────────────────
@@ -144,15 +150,12 @@ export default function App() {
         onGlyphsUpdate={handleGlyphsUpdate}
       />
     ),
-    4: (
-      <Step4
-        glyphs={appState.glyphResult?.glyphs ?? []}
-      />
-    ),
+    4: null,  // Step4 render แยกใน main เพื่อป้องกัน unmount (ดูด้านล่าง)
     5: (
       <Step5
         versionedGlyphs={appState.versionedGlyphs}
         extractedGlyphs={appState.glyphResult?.glyphs ?? []}
+        ttfBuffer={appState.ttfBuffer}
       />
     ),
   }
@@ -302,7 +305,15 @@ export default function App() {
             padding: step === 5 ? 0 : "28px 32px",
             background: step === 5 ? "#E7E6E6" : C.bg,
           }}>
-            {content[step]}
+            {/* Step 4 ต้องไม่ถูก unmount เพื่อให้ auto-build ทำงานและ ttfBuffer ถึง Step 5
+                ใช้ display:none แทน conditional render */}
+            <div style={{ display: step === 4 ? "contents" : "none" }}>
+              <Step4
+                glyphs={appState.glyphResult?.glyphs ?? []}
+                onFontReady={handleFontReady}
+              />
+            </div>
+            {step !== 4 && content[step]}
           </main>
 
           <div style={{ height: 3, background: C.border }}>
