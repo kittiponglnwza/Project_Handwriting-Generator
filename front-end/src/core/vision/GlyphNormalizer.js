@@ -33,6 +33,7 @@ export class GlyphNormalizer {
     // Sample bottom-heavy pixels to find baseline
     let maxDensity = 0
     let baselineY = Math.floor(height * 0.8) // Default baseline
+    const data = imageData.data  // ✅ fix: ต้องใช้ .data
     
     // Scan from bottom to top looking for densest row
     for (let y = Math.floor(height * 0.6); y < Math.floor(height * 0.9); y++) {
@@ -40,10 +41,10 @@ export class GlyphNormalizer {
       
       for (let x = 0; x < width; x++) {
         const idx = (y * width + x) * 4
-        const alpha = imageData[idx + 3]
+        const alpha = data[idx + 3]
         
         if (alpha > 30) {
-          const lum = imageData[idx] * 0.299 + imageData[idx + 1] * 0.587 + imageData[idx + 2] * 0.114
+          const lum = data[idx] * 0.299 + data[idx + 1] * 0.587 + data[idx + 2] * 0.114
           if (lum < 180) darkPixels++
         }
       }

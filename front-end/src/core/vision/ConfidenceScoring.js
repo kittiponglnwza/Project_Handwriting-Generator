@@ -114,14 +114,15 @@ export class ConfidenceScoring {
     let inkPixels = 0
     let totalInkLuminance = 0
     let minX = width, minY = height, maxX = 0, maxY = 0
+    const data = imageData.data  // ✅ ต้องใช้ .data เพราะ imageData เป็น ImageData object
     
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const idx = (y * width + x) * 4
-        const alpha = imageData[idx + 3]
+        const alpha = data[idx + 3]
         
         if (alpha > 30) {
-          const lum = imageData[idx] * 0.299 + imageData[idx + 1] * 0.587 + imageData[idx + 2] * 0.114
+          const lum = data[idx] * 0.299 + data[idx + 1] * 0.587 + data[idx + 2] * 0.114
           
           if (lum < 180) {
             inkPixels++
@@ -150,15 +151,16 @@ export class ConfidenceScoring {
     let edgePixels = 0
     let totalEdgeStrength = 0
     let noisePixels = 0
+    const data = imageData.data  // ✅ fix: ต้องใช้ .data
     
     // Simple edge detection using Sobel operator
     for (let y = 1; y < height - 1; y++) {
       for (let x = 1; x < width - 1; x++) {
         const idx = (y * width + x) * 4
-        const alpha = imageData[idx + 3]
+        const alpha = data[idx + 3]
         
         if (alpha > 30) {
-          const lum = imageData[idx] * 0.299 + imageData[idx + 1] * 0.587 + imageData[idx + 2] * 0.114
+          const lum = data[idx] * 0.299 + data[idx + 1] * 0.587 + data[idx + 2] * 0.114
           
           if (lum < 180) {
             // Calculate gradient
@@ -167,10 +169,10 @@ export class ConfidenceScoring {
             const idx_up = ((y - 1) * width + x) * 4
             const idx_down = ((y + 1) * width + x) * 4
             
-            const lum_left = imageData[idx_left] * 0.299 + imageData[idx_left + 1] * 0.587 + imageData[idx_left + 2] * 0.114
-            const lum_right = imageData[idx_right] * 0.299 + imageData[idx_right + 1] * 0.587 + imageData[idx_right + 2] * 0.114
-            const lum_up = imageData[idx_up] * 0.299 + imageData[idx_up + 1] * 0.587 + imageData[idx_up + 2] * 0.114
-            const lum_down = imageData[idx_down] * 0.299 + imageData[idx_down + 1] * 0.587 + imageData[idx_down + 2] * 0.114
+            const lum_left = data[idx_left] * 0.299 + data[idx_left + 1] * 0.587 + data[idx_left + 2] * 0.114
+            const lum_right = data[idx_right] * 0.299 + data[idx_right + 1] * 0.587 + data[idx_right + 2] * 0.114
+            const lum_up = data[idx_up] * 0.299 + data[idx_up + 1] * 0.587 + data[idx_up + 2] * 0.114
+            const lum_down = data[idx_down] * 0.299 + data[idx_down + 1] * 0.587 + data[idx_down + 2] * 0.114
             
             const gradX = Math.abs(lum_right - lum_left)
             const gradY = Math.abs(lum_down - lum_up)
@@ -204,14 +206,15 @@ export class ConfidenceScoring {
   analyzeSpatialProperties(imageData, width, height, char) {
     let minX = width, minY = height, maxX = 0, maxY = 0
     let inkPixels = 0
+    const data = imageData.data  // ✅ fix: ต้องใช้ .data
     
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const idx = (y * width + x) * 4
-        const alpha = imageData[idx + 3]
+        const alpha = data[idx + 3]
         
         if (alpha > 30) {
-          const lum = imageData[idx] * 0.299 + imageData[idx + 1] * 0.587 + imageData[idx + 2] * 0.114
+          const lum = data[idx] * 0.299 + data[idx + 1] * 0.587 + data[idx + 2] * 0.114
           
           if (lum < 180) {
             inkPixels++
@@ -279,8 +282,9 @@ export class ConfidenceScoring {
         if (lum < 180) {
           luminanceVariance += Math.pow(lum - meanLuminance, 2)
           
-          // Check for artifacts (very dark or very light spots)
-          if (lum < 50 || lum > 150) {
+          // Artifact = isolated bright spot WITHIN ink region (lum 130-179)
+          // ไม่นับ ink เข้ม (lum < 130) ว่าเป็น artifact
+          if (lum > 130 && lum < 180) {
             artifactPixels++
           }
         }
@@ -308,14 +312,15 @@ export class ConfidenceScoring {
     // For Thai marks, check positioning and size
     let inkPixels = 0
     let minY = height, maxY = 0
+    const data = imageData.data  // ✅ fix: ต้องใช้ .data
     
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const idx = (y * width + x) * 4
-        const alpha = imageData[idx + 3]
+        const alpha = data[idx + 3]
         
         if (alpha > 30) {
-          const lum = imageData[idx] * 0.299 + imageData[idx + 1] * 0.587 + imageData[idx + 2] * 0.114
+          const lum = data[idx] * 0.299 + data[idx + 1] * 0.587 + data[idx + 2] * 0.114
           
           if (lum < 180) {
             inkPixels++
@@ -367,21 +372,27 @@ export class ConfidenceScoring {
     const { density, coverage, balance } = analysis
     let score = 0
     
-    // Ideal density is between 0.05 and 0.3
-    if (density >= 0.05 && density <= 0.3) {
+    // Thai handwriting strokes are thin — ideal density is 0.02–0.25
+    if (density >= 0.02 && density <= 0.25) {
       score += 0.4
-    } else if (density >= 0.02 && density <= 0.5) {
-      score += 0.2
+    } else if (density >= 0.01 && density <= 0.5) {
+      score += 0.25
+    } else if (density > 0) {
+      score += 0.1  // มีหมึกบ้าง ดีกว่าว่างเปล่า
     }
     
     // Coverage should be reasonable
-    if (coverage >= 0.1 && coverage <= 0.7) {
+    if (coverage >= 0.05 && coverage <= 0.7) {
       score += 0.3
+    } else if (coverage > 0) {
+      score += 0.15
     }
     
     // Balance should be good (dark ink)
-    if (balance > 0.6) {
+    if (balance > 0.5) {
       score += 0.3
+    } else if (balance > 0.2) {
+      score += 0.15
     }
     
     return Math.min(1, score)

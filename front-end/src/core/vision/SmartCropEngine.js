@@ -25,16 +25,17 @@ export class SmartCropEngine {
 
     let minX = width, minY = height, maxX = 0, maxY = 0
     let inkPixels = []
+    const data = imageData.data  // ✅ fix: ImageData object ต้องใช้ .data
     
     // Scan for ink pixels
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const idx = (y * width + x) * 4
-        const alpha = imageData[idx + 3]
+        const alpha = data[idx + 3]
         
         if (alpha < 30) continue // Skip transparent pixels
         
-        const lum = imageData[idx] * 0.299 + imageData[idx + 1] * 0.587 + imageData[idx + 2] * 0.114
+        const lum = data[idx] * 0.299 + data[idx + 1] * 0.587 + data[idx + 2] * 0.114
         
         // Adaptive threshold for Thai marks (smaller characters)
         const adaptiveThreshold = isThaiMark ? threshold - 20 : threshold

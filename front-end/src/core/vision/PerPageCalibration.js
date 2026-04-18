@@ -18,6 +18,7 @@ export class PerPageCalibration {
     // Sample edges at multiple angles to find dominant orientation
     const angles = []
     const step = 4 // Sample every 4 pixels for performance
+    const data = imageData.data  // ✅ fix: ต้องใช้ .data
     
     // Detect horizontal edges
     for (let y = step; y < height - step; y += step * 4) {
@@ -28,9 +29,9 @@ export class PerPageCalibration {
         const idx1 = (y * width + x) * 4
         const idx2 = (y * width + x + step) * 4
         
-        if (imageData[idx1 + 3] > 10 && imageData[idx2 + 3] > 10) {
-          const lum1 = imageData[idx1] * 0.299 + imageData[idx1 + 1] * 0.587 + imageData[idx1 + 2] * 0.114
-          const lum2 = imageData[idx2] * 0.299 + imageData[idx2 + 1] * 0.587 + imageData[idx2 + 2] * 0.114
+        if (data[idx1 + 3] > 10 && data[idx2 + 3] > 10) {
+          const lum1 = data[idx1] * 0.299 + data[idx1 + 1] * 0.587 + data[idx1 + 2] * 0.114
+          const lum2 = data[idx2] * 0.299 + data[idx2 + 1] * 0.587 + data[idx2 + 2] * 0.114
           const gradient = Math.abs(lum2 - lum1)
           
           if (gradient > 30) {
@@ -82,10 +83,11 @@ export class PerPageCalibration {
       // Find consecutive dark horizontal lines (cell boundaries)
       let boundaryCount = 0
       let lastDarkX = -1
+      const data = imageData.data  // ✅ fix
       
       for (let x = width * 0.1; x < width * 0.9; x += 2) {
         const idx = (y * width + Math.floor(x)) * 4
-        const lum = imageData[idx] * 0.299 + imageData[idx + 1] * 0.587 + imageData[idx + 2] * 0.114
+        const lum = data[idx] * 0.299 + data[idx + 1] * 0.587 + data[idx + 2] * 0.114
         
         if (lum < 150) { // Dark pixel
           if (lastDarkX >= 0 && x - lastDarkX > expectedCellSize * 0.7) {
@@ -123,6 +125,7 @@ export class PerPageCalibration {
     const searchSize = Math.min(width, height) * 0.15
     let bestScore = 0
     let bestX = 0, bestY = 0
+    const data = imageData.data  // ✅ fix
     
     // Search for top-left corner area
     for (let y = 10; y < searchSize; y += 5) {
@@ -133,7 +136,7 @@ export class PerPageCalibration {
         for (let dy = 0; dy < 20; dy += 2) {
           for (let dx = 0; dx < 20; dx += 2) {
             const idx = ((y + dy) * width + (x + dx)) * 4
-            const lum = imageData[idx] * 0.299 + imageData[idx + 1] * 0.587 + imageData[idx + 2] * 0.114
+            const lum = data[idx] * 0.299 + data[idx + 1] * 0.587 + data[idx + 2] * 0.114
             
             // Expect dark pixels in corner pattern
             if (dy < 5 || dx < 5) {

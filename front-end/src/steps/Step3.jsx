@@ -246,6 +246,28 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
     }
   }, [chars, calibration])
 
+  // ── Re-run Vision Engine เมื่อ calibration (slider) เปลี่ยน ──────────────
+  const prevCalibrationRef = useRef(null)
+  const calibrationDebounceRef = useRef(null)
+  useEffect(() => {
+    const prev = prevCalibrationRef.current
+    prevCalibrationRef.current = calibration
+    if (!prev) return // ครั้งแรก skip
+    const changed =
+      prev.offsetX !== calibration.offsetX ||
+      prev.offsetY !== calibration.offsetY ||
+      prev.cellAdjust !== calibration.cellAdjust ||
+      prev.gapAdjust !== calibration.gapAdjust
+    if (changed && visionEngineResults && !autoAligning && pageRef.current?.pages?.length > 0 && chars.length > 0) {
+      // debounce 600ms — รอให้ user หยุดลาก slider ก่อนค่อย re-extract
+      clearTimeout(calibrationDebounceRef.current)
+      calibrationDebounceRef.current = setTimeout(() => {
+        setVisionEngineResults(null) // ล้างผลเดิม → auto-run effect จะ kick in
+      }, 600)
+    }
+    return () => clearTimeout(calibrationDebounceRef.current)
+  }, [calibration]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Auto-run Vision Engine when pages are loaded ───────────────────────
   useEffect(() => {
     console.log('=== AUTO-RUN VISION ENGINE CHECK ===')
@@ -691,7 +713,10 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 12 }}>
           <div style={{ display: "flex", alignItems: "center", minHeight: 30 }}>
-            {autoInfo && <span style={{ fontSize: 11, color: C.inkLt }}>{autoInfo}</span>}
+            {autoAligning
+              ? <span style={{ fontSize: 11, color: C.amber }}>⟳ กำลัง re-extract ด้วย calibration ใหม่...</span>
+              : autoInfo && <span style={{ fontSize: 11, color: C.inkLt }}>{autoInfo}</span>
+            }
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             <Btn onClick={handleVisionEngineExtraction} variant="primary" size="sm" disabled={autoAligning || pipelineState === PipelineStates.EXTRACTING}>

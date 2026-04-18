@@ -141,15 +141,16 @@ export class ThaiSpecialHandling {
   detectThaiMarkInk(imageData, width, height, params) {
     const { inkThreshold, detectionRadius } = params
     const inkPixels = []
+    const data = imageData.data  // ✅ fix: ต้องใช้ .data
     
     // Use connected component analysis for small marks
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const idx = (y * width + x) * 4
-        const alpha = imageData[idx + 3]
+        const alpha = data[idx + 3]
         
         if (alpha > 20) { // Lower alpha threshold for marks
-          const lum = imageData[idx] * 0.299 + imageData[idx + 1] * 0.587 + imageData[idx + 2] * 0.114
+          const lum = data[idx] * 0.299 + data[idx + 1] * 0.587 + data[idx + 2] * 0.114
           
           if (lum < inkThreshold) {
             // Check neighborhood to reduce noise
@@ -169,6 +170,7 @@ export class ThaiSpecialHandling {
    */
   hasInkNeighborhood(imageData, width, height, centerX, centerY, radius, threshold) {
     let neighborCount = 0
+    const data = imageData.data  // ✅ fix
     
     for (let dy = -radius; dy <= radius; dy++) {
       for (let dx = -radius; dx <= radius; dx++) {
@@ -179,10 +181,10 @@ export class ThaiSpecialHandling {
         
         if (x >= 0 && x < width && y >= 0 && y < height) {
           const idx = (y * width + x) * 4
-          const alpha = imageData[idx + 3]
+          const alpha = data[idx + 3]
           
           if (alpha > 20) {
-            const lum = imageData[idx] * 0.299 + imageData[idx + 1] * 0.587 + imageData[idx + 2] * 0.114
+            const lum = data[idx] * 0.299 + data[idx + 1] * 0.587 + data[idx + 2] * 0.114
             if (lum < threshold) {
               neighborCount++
             }
