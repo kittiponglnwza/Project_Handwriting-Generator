@@ -278,6 +278,8 @@ export function extractGlyphsFromCanvas({ ctx, pageWidth, pageHeight, chars, cal
       _inkCanvas: inkCanvas,
       _inkW: cropW,
       _inkH: cropH,
+      _sourceRect: { x: cellX, y: cellY, w: cropW, h: cropH },
+      _pageCtx: ctx,
       id: `${i}-${ch}`,
       index: i + 1,
       ch,

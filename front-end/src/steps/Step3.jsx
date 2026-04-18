@@ -74,9 +74,10 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
   const [telemetryData, setTelemetryData] = useState({})
   const [pageVersion, setPageVersion] = useState(0)
   const [tracing, setTracing] = useState(false)
-  const [engineMode, setEngineMode] = useState("vision") // "vision" | "legacy"
+  const engineMode = "vision" // locked to Vision Engine — git overlay only
   const [visionEngineResults, setVisionEngineResults] = useState(null)
-  const [showQADashboard, setShowQADashboard] = useState(true)
+  const [showQADashboard, setShowQADashboard] = useState(false)
+  const [glyphOffsets, setGlyphOffsets] = useState({}) // { [glyphId]: {x, y} }
 
   const pageRef = useRef(null)
   const stateMachineRef = useRef(null)
@@ -503,6 +504,29 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
     if (zoomGlyph?.id === glyph.id) setZoomGlyph(null)
   }
 
+
+  // ── Per-glyph re-crop with individual offset ──────────────────────────────
+  // ข้าม Vision Engine preview (มักเป็น null/white) — crop ตรงจาก page canvas แทน
+  const getAdjustedPreview = (glyph, offsetX = 0, offsetY = 0) => {
+    const src = glyph._sourceRect
+    const ctx = glyph._pageCtx
+    if (src && ctx && ctx.canvas) {
+      try {
+        const canvas = document.createElement('canvas')
+        canvas.width = src.w; canvas.height = src.h
+        const gc = canvas.getContext('2d')
+        gc.fillStyle = '#fff'
+        gc.fillRect(0, 0, src.w, src.h)
+        const sx = Math.max(0, Math.min(src.x + offsetX, ctx.canvas.width - 1))
+        const sy = Math.max(0, Math.min(src.y + offsetY, ctx.canvas.height - 1))
+        gc.drawImage(ctx.canvas, sx, sy, src.w, src.h, 0, 0, src.w, src.h)
+        return canvas.toDataURL('image/png')
+      } catch (e) { /* fall through */ }
+    }
+    // fallback: ถ้าไม่มี _pageCtx ใช้ preview เดิม หรือ null
+    return glyph.preview ?? null
+  }
+
   const stStyle = {
     ok:       { border: C.sageMd,  bg: C.bgCard,  textColor: C.sage,  label: "OK" },
     missing:  { border: C.blushMd, bg: C.blushLt, textColor: C.blush, label: "Missing" },
@@ -670,14 +694,13 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
             {autoInfo && <span style={{ fontSize: 11, color: C.inkLt }}>{autoInfo}</span>}
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <Btn onClick={engineMode === "vision" ? handleVisionEngineExtraction : handleAutoAlign}   variant="primary" size="sm" disabled={autoAligning || pipelineState === PipelineStates.EXTRACTING}>
-              {autoAligning ? "กำลังประมวลผล..." : (engineMode === "vision" ? "ดึงด้วย Vision Engine" : "จัดอัตโนมัติ")}
+            <Btn onClick={handleVisionEngineExtraction} variant="primary" size="sm" disabled={autoAligning || pipelineState === PipelineStates.EXTRACTING}>
+              {autoAligning ? "กำลังประมวลผล..." : "ดึงด้วย Vision Engine"}
             </Btn>
             <Btn onClick={() => setRemovedIds(new Set())}                   variant="ghost"   size="sm" disabled={removedIds.size === 0}>คืนค่าตัวที่ลบ</Btn>
             <Btn onClick={() => setCalibration(ZERO_CALIBRATION)}        variant="ghost"   size="sm">รีเซ็ตกริด</Btn>
             <Btn onClick={() => setShowDebug(v => !v)}                      variant="ghost"   size="sm">{showDebug ? "ซ่อน Overlay" : "ดู Grid Overlay"}</Btn>
             <Btn onClick={() => setShowOverlay(v => !v)}                    variant="ghost"   size="sm">{showOverlay ? "ซ่อน Debug" : "Debug Overlay"}</Btn>
-            <Btn onClick={() => setEngineMode(engineMode === "vision" ? "legacy" : "vision")}          variant="ghost"   size="sm">{engineMode === "vision" ? "Vision Engine" : "Legacy"}</Btn>
             <Btn onClick={() => setShowQADashboard(v => !v)}          variant="ghost"   size="sm">{showQADashboard ? "ซ่อน QA" : "QA Dashboard"}</Btn>
           </div>
         </div>
@@ -707,36 +730,38 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
         </div>
       )}
 
-      {/* QA Dashboard */}
-      {showQADashboard && visionEngineResults && engineMode === "vision" && (
-        <QADashboard
-          glyphs={displayGlyphs}
-          qaReport={visionEngineResults.qaReport}
-          onGlyphSelect={setActiveId}
-          onRetryExtraction={handleVisionEngineExtraction}
-        />
+      {/* Glyph grid — คลิกการ์ดเพื่อปรับตำแหน่งเฉพาะตัว */}
+      {displayGlyphs.length > 0 && (
+        <div style={{ marginBottom: 8 }}>
+          <p style={{ fontSize: 11, color: C.inkLt, marginBottom: 8 }}>
+            คลิกที่การ์ดเพื่อเปิดตัวปรับตำแหน่งเฉพาะตัวอักษรนั้น
+          </p>
+        </div>
       )}
-
-      {/* Glyph grid - now state-driven */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(88px,1fr))", gap: 8 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(88px,1fr))", gap: 8, marginBottom: 20 }}>
         {displayGlyphs.map(g => {
-          // Use Vision Engine status if available, fallback to legacy status
-    const glyphStatus = g.confidence?.status || g.status
-    const s = stStyle[glyphStatus]
+          const glyphStatus = g.confidence?.status || g.status
+          const s = stStyle[glyphStatus] || stStyle.ok
           const isActive = activeId === g.id
+          const hasOff = !!glyphOffsets[g.id]
           return (
             <div key={g.id} className="glyph-card" onClick={() => setActiveId(isActive ? null : g.id)}
-              style={{ position: "relative", background: s.bg, border: `1.5px solid ${isActive ? C.ink : s.border}`, borderRadius: 12, padding: "8px 6px", textAlign: "center", cursor: "pointer" }}>
+              style={{ position: "relative", background: isActive ? C.bgMuted : s.bg, border: `1.5px solid ${isActive ? C.ink : s.border}`, borderRadius: 12, padding: "8px 6px", textAlign: "center", cursor: "pointer", outline: isActive ? `2px solid ${C.ink}` : "none", outlineOffset: 1 }}>
+              {/* ปุ่มลบ */}
               <button type="button" onClick={e => { e.stopPropagation(); setRemovedIds(prev => { const n = new Set(prev); n.add(g.id); return n }) }}
-                style={{ position: "absolute", top: 4, right: 4, width: 20, height: 20, borderRadius: 999, border: `1px solid ${C.border}`, background: "#fff", color: C.inkMd, fontSize: 10, cursor: "pointer" }}
-                title="ลบช่องนี้">ลบ</button>
-              <button type="button" onClick={e => { e.stopPropagation(); setZoomGlyph(g) }}
+                style={{ position: "absolute", top: 4, right: 4, width: 20, height: 20, borderRadius: 999, border: `1px solid ${C.border}`, background: "#fff", color: C.inkMd, fontSize: 10, cursor: "pointer", zIndex: 1 }}
+                title="ลบช่องนี้">✕</button>
+              {/* ภาพ glyph */}
+              <button type="button" onClick={e => { e.stopPropagation(); const off = glyphOffsets[g.id] ?? {x:0,y:0}; setZoomGlyph({ ...g, preview: getAdjustedPreview(g, off.x, off.y) }) }}
                 style={{ width: "100%", aspectRatio: "1", borderRadius: 8, background: C.bgCard, border: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", marginBottom: 6, padding: 4, cursor: "zoom-in" }}
                 title="ดูภาพขยาย">
-                <img src={g.preview} alt={`Glyph ${g.ch}`} style={{ width: "100%", height: "100%", objectFit: "contain", imageRendering: "auto" }} />
+                <img src={getAdjustedPreview(g, glyphOffsets[g.id]?.x ?? 0, glyphOffsets[g.id]?.y ?? 0)} alt={`Glyph ${g.ch}`} style={{ width: "100%", height: "100%", objectFit: "contain", imageRendering: "auto" }} />
               </button>
               <p style={{ fontSize: 12, fontWeight: 500, color: C.ink }}>{g.ch}</p>
-              <p style={{ fontSize: 9, color: C.inkLt, marginTop: 1 }}>HG{String(g.index).padStart(3,"0")}</p>
+              <p style={{ fontSize: 9, color: C.inkLt, marginTop: 1 }}>
+                HG{String(g.index).padStart(3,"0")}
+                {hasOff && <span style={{ color: C.amber, marginLeft: 2 }}>✎</span>}
+              </p>
               <p style={{ fontSize: 10, color: s.textColor, marginTop: 2 }}>
                 {s.label}
                 {g.confidence && (
@@ -745,54 +770,259 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
                   </span>
                 )}
               </p>
+              {/* hint เฉพาะเมื่อ active */}
+              {isActive && (
+                <div style={{ position: "absolute", bottom: -1, left: 0, right: 0, background: C.ink, color: "#fff", fontSize: 8, borderRadius: "0 0 10px 10px", padding: "2px 0" }}>
+                  ▼ ดูตัวปรับด้านล่าง
+                </div>
+              )}
             </div>
           )
         })}
       </div>
 
-      {/* Active glyph detail */}
-      {activeGlyph && (
-        <div style={{ marginTop: 16, padding: "14px 16px", background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 12, fontSize: 12, color: C.inkMd }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <div style={{ width: 88, height: 88, borderRadius: 10, border: `1px solid ${C.border}`, background: C.bgMuted, padding: 6, cursor: "zoom-in" }} onClick={() => setZoomGlyph(activeGlyph)}>
-              <img src={activeGlyph.preview} alt={`Preview ${activeGlyph.ch}`} style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+      {/* Active glyph detail — with per-glyph offset controls */}
+      {activeGlyph && (() => {
+        const off = glyphOffsets[activeGlyph.id] ?? { x: 0, y: 0 }
+        const setOff = (axis, val) =>
+          setGlyphOffsets(prev => ({
+            ...prev,
+            [activeGlyph.id]: { ...off, [axis]: val }
+          }))
+        const adjPreview = getAdjustedPreview(activeGlyph, off.x, off.y)
+        const hasOffset = off.x !== 0 || off.y !== 0
+        return (
+          <div style={{ marginTop: 16, background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
+            {/* Header */}
+            <div style={{ padding: "10px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <p style={{ fontSize: 11, fontWeight: 500, letterSpacing: "0.08em", textTransform: "uppercase", color: C.inkLt, margin: 0 }}>
+                ปรับตำแหน่งเฉพาะตัวอักษร: <b style={{ color: C.ink, textTransform: "none" }}>{activeGlyph.ch}</b>
+                {" "}• HG{String(activeGlyph.index).padStart(3, "0")}
+              </p>
+              <div style={{ display: "flex", gap: 8 }}>
+                {hasOffset && (
+                  <Btn
+                    size="sm" variant="ghost"
+                    onClick={() => setGlyphOffsets(prev => { const n = { ...prev }; delete n[activeGlyph.id]; return n })}
+                  >
+                    รีเซ็ตตำแหน่ง
+                  </Btn>
+                )}
+                <Btn size="sm" variant="ghost" onClick={() => setActiveId(null)}>ปิด</Btn>
+              </div>
             </div>
-            <div style={{ lineHeight: 1.8 }}>
-              <div>เป้าหมาย: <b style={{ color: C.ink }}>{activeGlyph.ch}</b> • ลำดับช่อง {activeGlyph.index}</div>
-              <div>รหัสช่อง: <b style={{ color: C.ink }}>HG{String(activeGlyph.index).padStart(3,"0")}</b></div>
-              <div>สถานะ: <b style={{ color: C.sage }}>{activeGlyph.confidence?.status || activeGlyph.status}</b></div>
-              {activeGlyph.confidence ? (
-                <div>ความมั่นใจ: <b style={{ color: C.ink }}>{(activeGlyph.confidence.overall * 100).toFixed(1)}%</b></div>
-              ) : (
-                <div>Ink coverage: {(activeGlyph.inkRatio * 100).toFixed(2)}% • Border touch: {(activeGlyph.edgeRatio * 100).toFixed(2)}%</div>
-              )}
+
+            <div style={{ display: "flex", gap: 0 }}>
+              {/* Preview column */}
+              <div style={{ padding: 16, display: "flex", flexDirection: "column", alignItems: "center", gap: 8, borderRight: `1px solid ${C.border}`, minWidth: 140 }}>
+                <div
+                  style={{ width: 110, height: 110, borderRadius: 10, border: `2px solid ${C.border}`, background: C.bgMuted, padding: 8, cursor: "zoom-in", display: "flex", alignItems: "center", justifyContent: "center" }}
+                  onClick={() => setZoomGlyph({ ...activeGlyph, preview: adjPreview })}
+                >
+                  <img src={adjPreview} alt={`Preview ${activeGlyph.ch}`} style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+                </div>
+                {hasOffset && (
+                  <p style={{ fontSize: 10, color: C.amber, textAlign: "center" }}>
+                    ปรับแล้ว ({off.x > 0 ? "+" : ""}{off.x}, {off.y > 0 ? "+" : ""}{off.y})
+                  </p>
+                )}
+                <div style={{ fontSize: 11, color: C.inkMd, lineHeight: 1.7, textAlign: "center" }}>
+                  <div>สถานะ: <b style={{ color: C.sage }}>{activeGlyph.confidence?.status || activeGlyph.status}</b></div>
+                  {activeGlyph.confidence ? (
+                    <div>ความมั่นใจ: <b style={{ color: C.ink }}>{(activeGlyph.confidence.overall * 100).toFixed(1)}%</b></div>
+                  ) : null}
+                </div>
+              </div>
+
+              {/* Adjusters column */}
+              <div style={{ flex: 1, padding: 16, display: "flex", flexDirection: "column", gap: 14 }}>
+                <p style={{ fontSize: 11, color: C.inkLt, margin: 0 }}>
+                  ปรับได้เฉพาะตัวนี้ ไม่กระทบกับตัวอื่น
+                </p>
+                <Adjuster
+                  label="เลื่อนซ้าย / ขวา (X)"
+                  value={off.x}
+                  min={-80} max={80} step={1}
+                  onChange={v => setOff("x", v)}
+                />
+                <Adjuster
+                  label="เลื่อนขึ้น / ลง (Y)"
+                  value={off.y}
+                  min={-80} max={80} step={1}
+                  onChange={v => setOff("y", v)}
+                />
+                {/* Arrow nudge buttons */}
+                <div>
+                  <p style={{ fontSize: 11, color: C.inkLt, marginBottom: 8 }}>กดเพื่อขยับทีละ 1px:</p>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 40px)", gridTemplateRows: "repeat(3, 40px)", gap: 4 }}>
+                    {[
+                      { label: "↖", dx: -1, dy: -1 }, { label: "↑", dx: 0, dy: -1 }, { label: "↗", dx: 1, dy: -1 },
+                      { label: "←", dx: -1, dy: 0  }, { label: "·", dx: 0, dy: 0   }, { label: "→", dx: 1, dy: 0  },
+                      { label: "↙", dx: -1, dy: 1  }, { label: "↓", dx: 0, dy: 1   }, { label: "↘", dx: 1, dy: 1  },
+                    ].map(({ label, dx, dy }) => (
+                      <button
+                        key={label}
+                        type="button"
+                        disabled={label === "·"}
+                        onClick={() => { setOff("x", off.x + dx); setOff("y", off.y + dy) }}
+                        style={{
+                          width: 40, height: 40,
+                          border: `1px solid ${C.border}`,
+                          borderRadius: 8,
+                          background: label === "·" ? C.bgMuted : C.bgCard,
+                          color: label === "·" ? C.inkLt : C.ink,
+                          fontSize: 14, cursor: label === "·" ? "default" : "pointer",
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          transition: "background 0.1s"
+                        }}
+                        onMouseEnter={e => { if (label !== "·") e.currentTarget.style.background = C.bgMuted }}
+                        onMouseLeave={e => { e.currentTarget.style.background = label === "·" ? C.bgMuted : C.bgCard }}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
+        )
+      })()}
+
+
+      {/* QA Dashboard (collapse by default) */}
+      {showQADashboard && visionEngineResults && (
+        <div style={{ marginBottom: 16 }}>
+          <QADashboard
+            glyphs={displayGlyphs}
+            qaReport={visionEngineResults.qaReport}
+            onGlyphSelect={setActiveId}
+            onRetryExtraction={handleVisionEngineExtraction}
+          />
         </div>
       )}
 
-      {/* Zoom modal */}
-      {zoomGlyph && (
-        <div role="dialog" aria-modal="true" onClick={() => setZoomGlyph(null)}
-          style={{ position: "fixed", inset: 0, background: "rgba(21,19,14,.72)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-          <div onClick={e => e.stopPropagation()} style={{ width: "min(680px,94vw)", borderRadius: 16, background: "#fff", border: `1px solid ${C.border}`, padding: 18 }}>
-            <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
-              <p style={{ fontSize: 14, fontWeight: 600, color: C.ink }}>ตัวอักษรเป้าหมาย: {zoomGlyph.ch} • ลำดับช่อง {zoomGlyph.index}</p>
-              <button type="button" onClick={() => setZoomGlyph(null)}
-                style={{ marginLeft: "auto", border: `1px solid ${C.border}`, borderRadius: 8, background: C.bgCard, padding: "4px 10px", fontSize: 12, cursor: "pointer", color: C.ink }}>ปิด</button>
+      {/* Zoom modal — with inline per-glyph adjustment */}
+      {zoomGlyph && (() => {
+        const off = glyphOffsets[zoomGlyph.id] ?? { x: 0, y: 0 }
+        const setOff = (axis, val) => {
+          const newOff = { ...off, [axis]: val }
+          setGlyphOffsets(prev => ({ ...prev, [zoomGlyph.id]: newOff }))
+          // update preview in modal live
+          setZoomGlyph(prev => ({ ...prev, preview: getAdjustedPreview(prev, newOff.x, newOff.y) }))
+        }
+        const hasOffset = off.x !== 0 || off.y !== 0
+        return (
+          <div role="dialog" aria-modal="true" onClick={() => setZoomGlyph(null)}
+            style={{ position: "fixed", inset: 0, background: "rgba(21,19,14,.72)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+            <div onClick={e => e.stopPropagation()} style={{ width: "min(780px,96vw)", borderRadius: 16, background: "#fff", border: `1px solid ${C.border}`, overflow: "hidden" }}>
+
+              {/* Header */}
+              <div style={{ display: "flex", alignItems: "center", padding: "14px 18px", borderBottom: `1px solid ${C.border}` }}>
+                <div>
+                  <p style={{ fontSize: 15, fontWeight: 600, color: C.ink, margin: 0 }}>
+                    {zoomGlyph.ch}
+                    <span style={{ fontSize: 12, fontWeight: 400, color: C.inkLt, marginLeft: 10 }}>
+                      HG{String(zoomGlyph.index).padStart(3, "0")} • ลำดับช่อง {zoomGlyph.index}
+                    </span>
+                  </p>
+                  {hasOffset && (
+                    <p style={{ fontSize: 11, color: C.amber, margin: "2px 0 0" }}>
+                      ✎ ปรับแล้ว X: {off.x > 0 ? "+" : ""}{off.x}, Y: {off.y > 0 ? "+" : ""}{off.y}
+                    </p>
+                  )}
+                </div>
+                <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+                  {hasOffset && (
+                    <button type="button"
+                      onClick={() => {
+                        setGlyphOffsets(prev => { const n = { ...prev }; delete n[zoomGlyph.id]; return n })
+                        setZoomGlyph(prev => ({ ...prev, preview: getAdjustedPreview(prev, 0, 0) }))
+                      }}
+                      style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: C.bgMuted, padding: "5px 12px", fontSize: 12, cursor: "pointer", color: C.ink }}>
+                      รีเซ็ต
+                    </button>
+                  )}
+                  <button type="button" onClick={() => setZoomGlyph(null)}
+                    style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: C.bgCard, padding: "5px 12px", fontSize: 12, cursor: "pointer", color: C.ink }}>
+                    ปิด
+                  </button>
+                </div>
+              </div>
+
+              {/* Body: preview + controls side by side */}
+              <div style={{ display: "flex", gap: 0 }}>
+
+                {/* Left: large preview */}
+                <div style={{ flex: 1, padding: 18, background: C.bgMuted, display: "flex", alignItems: "center", justifyContent: "center", minHeight: 320 }}>
+                  <img
+                    src={zoomGlyph.preview}
+                    alt={`Zoom ${zoomGlyph.ch}`}
+                    style={{ maxWidth: "100%", maxHeight: 400, objectFit: "contain", imageRendering: "auto", borderRadius: 8 }}
+                  />
+                </div>
+
+                {/* Right: adjustment controls */}
+                <div style={{ width: 260, padding: 18, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column", gap: 16 }}>
+                  <div>
+                    <p style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.inkLt, margin: "0 0 12px" }}>
+                      ปรับตำแหน่ง
+                    </p>
+                    <p style={{ fontSize: 11, color: C.inkLt, margin: "0 0 14px" }}>ปรับเฉพาะตัวนี้ ไม่กระทบตัวอื่น</p>
+
+                    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                      <Adjuster
+                        label="← ซ้าย / ขวา →"
+                        value={off.x} min={-100} max={100} step={1}
+                        onChange={v => setOff("x", v)}
+                      />
+                      <Adjuster
+                        label="↑ ขึ้น / ลง ↓"
+                        value={off.y} min={-100} max={100} step={1}
+                        onChange={v => setOff("y", v)}
+                      />
+                    </div>
+                  </div>
+
+                  {/* D-pad nudge */}
+                  <div>
+                    <p style={{ fontSize: 11, color: C.inkLt, margin: "0 0 10px" }}>ขยับทีละ 1px:</p>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 44px)", gap: 5 }}>
+                      {[
+                        { label: "↖", dx: -1, dy: -1 }, { label: "↑", dx: 0, dy: -1 }, { label: "↗", dx: 1, dy: -1 },
+                        { label: "←", dx: -1, dy: 0  }, { label: "·", dx: 0, dy: 0  }, { label: "→", dx: 1, dy: 0  },
+                        { label: "↙", dx: -1, dy: 1  }, { label: "↓", dx: 0, dy: 1  }, { label: "↘", dx: 1, dy: 1  },
+                      ].map(({ label, dx, dy }) => (
+                        <button key={label} type="button"
+                          disabled={label === "·"}
+                          onClick={() => { setOff("x", off.x + dx); setOff("y", off.y + dy) }}
+                          style={{
+                            width: 44, height: 44, border: `1px solid ${C.border}`, borderRadius: 8,
+                            background: label === "·" ? C.bgMuted : C.bgCard,
+                            color: label === "·" ? C.borderMd : C.ink,
+                            fontSize: 16, cursor: label === "·" ? "default" : "pointer",
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            fontWeight: 500,
+                          }}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Status info */}
+                  <div style={{ marginTop: "auto", paddingTop: 12, borderTop: `1px solid ${C.border}`, fontSize: 11, color: C.inkMd, lineHeight: 1.8 }}>
+                    <div>สถานะ: <b style={{ color: C.ink }}>{zoomGlyph.confidence?.status || zoomGlyph.status}</b></div>
+                    {zoomGlyph.confidence && (
+                      <div>ความมั่นใจ: <b style={{ color: C.ink }}>{(zoomGlyph.confidence.overall * 100).toFixed(1)}%</b></div>
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
-            <div style={{ borderRadius: 12, border: `1px solid ${C.border}`, background: C.bgMuted, padding: 12, display: "flex", justifyContent: "center" }}>
-              <img src={zoomGlyph.preview} alt={`Zoom ${zoomGlyph.ch}`} style={{ width: "min(520px,82vw)", height: "auto", objectFit: "contain" }} />
-            </div>
-            <p style={{ marginTop: 10, fontSize: 12, color: C.inkMd }}>
-              {zoomGlyph.confidence 
-                ? `ความมั่นใจ ${(zoomGlyph.confidence.overall * 100).toFixed(1)}% • สถานะ ${zoomGlyph.confidence.status}`
-                : `Ink coverage ${(zoomGlyph.inkRatio * 100).toFixed(2)}% • Border touch ${(zoomGlyph.edgeRatio * 100).toFixed(2)}%`
-              }
-            </p>
           </div>
-        </div>
-      )}
+        )
+      })()}
     </div>
   )
 }

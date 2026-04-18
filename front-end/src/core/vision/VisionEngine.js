@@ -11,6 +11,10 @@ import { SmartCropEngine } from './SmartCropEngine.js'
 import { GlyphNormalizer } from './GlyphNormalizer.js'
 import { ConfidenceScoring } from './ConfidenceScoring.js'
 import { ThaiSpecialHandling } from './ThaiSpecialHandling.js'
+import { extractGlyphsFromCanvas, getGridGeometry, getPageCapacity } from '../../lib/step3/glyphPipeline.js'
+import { GRID_COLS, MIN_TRUSTED_INDEX_TARGETS, TEMPLATE_CALIBRATION } from '../../lib/step3/constants.js'
+import { buildOrderedCellRectsForPage } from '../../lib/step3/regDots.js'
+import { mergeCalibration } from '../../lib/step3/utils.js'
 
 export class VisionEngine {
   constructor() {
@@ -145,86 +149,84 @@ export class VisionEngine {
   /**
    * Step 2: Extract glyphs using improved positioning
    */
+  /**
+   * Step 2: Extract glyphs using the proven glyphPipeline (same logic as legacy)
+   */
   async extractGlyphsFromCalibratedPages(calibratedPages, chars, calibration) {
     const allGlyphs = []
-    let charIndex = 0
-    
+    let cursor = 0
+
     for (const page of calibratedPages) {
-      if (charIndex >= chars.length) break
-      
+      if (cursor >= chars.length) break
+
+      if (!page.ctx || typeof page.ctx.getImageData !== 'function') {
+        console.warn(`Page ${page.pageNumber} has no valid ctx — skipping`)
+        continue
+      }
+
       try {
-        const pageGlyphs = await this.extractGlyphsFromPage(page, chars.slice(charIndex), calibration)
+        const baseCalibration = page.autoCalibration ?? TEMPLATE_CALIBRATION
+        const pageCalibration = mergeCalibration(baseCalibration, calibration)
+
+        const remainingChars = chars.length - cursor
+        let pageMaxCells
+        if (page.pageMeta?.cellCount > 0) {
+          pageMaxCells = Math.min(page.pageMeta.cellCount, remainingChars)
+        } else {
+          const geometry = getGridGeometry(page.pageWidth, page.pageHeight, Math.min(remainingChars, GRID_COLS * 6), pageCalibration)
+          pageMaxCells = getPageCapacity(page.pageHeight, geometry.startY, geometry.cellHeight, geometry.gap)
+          if (page.contiguousCount >= MIN_TRUSTED_INDEX_TARGETS)
+            pageMaxCells = Math.min(pageMaxCells, page.contiguousCount)
+          pageMaxCells = Math.min(pageMaxCells, remainingChars)
+        }
+        pageMaxCells = Math.min(pageMaxCells, GRID_COLS * 6)
+        if (pageMaxCells <= 0) continue
+
+        const pageCellFrom = cursor + 1
+        const hasGridLines = (page.regDots?.length ?? 0) >= 4
+        let pageCellRects = hasGridLines
+          ? buildOrderedCellRectsForPage(page, pageCellFrom, pageMaxCells)
+          : null
+        if (pageCellRects) {
+          pageCellRects = pageCellRects.map(r => ({
+            ...r, x: r.x + (calibration.offsetX || 0), y: r.y + (calibration.offsetY || 0),
+          }))
+        }
+
+        const pageChars = chars.slice(cursor, cursor + pageMaxCells)
+        if (pageChars.length === 0) continue
+
+        const rawPageGlyphs = extractGlyphsFromCanvas({
+          ctx: page.ctx,
+          pageWidth: page.pageWidth,
+          pageHeight: page.pageHeight,
+          chars: pageChars,
+          calibration: pageCalibration,
+          cellRects: pageCellRects,
+        })
+
+        const pageGlyphs = rawPageGlyphs.map((g, i) => ({
+          ...g,
+          id: `p${page.pageNumber}-${cursor + i}-${g.ch}`,
+          index: cursor + i + 1,
+          pageNumber: page.pageNumber,
+          canvas: g._inkCanvas,
+        }))
+
         allGlyphs.push(...pageGlyphs)
-        charIndex += pageGlyphs.length
-        
+        cursor += pageChars.length
+
       } catch (error) {
         console.error(`Failed to extract glyphs from page ${page.pageNumber}:`, error)
       }
     }
-    
+
     return allGlyphs
   }
 
-  /**
-   * Extract glyphs from a single calibrated page
-   */
+  /** @deprecated replaced by extractGlyphsFromCalibratedPages */
   async extractGlyphsFromPage(page, pageChars, calibration) {
-    const ctx = page.ctx
-    const pageWidth = page.pageWidth
-    const pageHeight = page.pageHeight
-    
-    // Guard: page must have a valid canvas context
-    if (!ctx || typeof ctx.getImageData !== 'function') {
-      console.warn(`Page ${page.pageNumber} has no valid ctx — skipping`)
-      return []
-    }
-    
-    const glyphs = []
-    
-    for (let i = 0; i < pageChars.length; i++) {
-      const char = pageChars[i]
-      
-      try {
-        // Calculate cell position using page-specific calibration
-        const cellPosition = this.calculateCellPosition(page, i, calibration)
-        
-        if (!cellPosition) {
-          console.warn(`Could not calculate position for glyph ${i} (${char})`)
-          continue
-        }
-        
-        // Extract glyph canvas
-        const glyphCanvas = this.extractGlyphCanvas(ctx, cellPosition, pageWidth, pageHeight)
-        
-        glyphs.push({
-          id: `p${page.pageNumber}-${i}-${char}`,
-          index: i + 1,
-          pageNumber: page.pageNumber,
-          ch: char,
-          canvas: glyphCanvas,
-          _inkCanvas: glyphCanvas,
-          _inkW: glyphCanvas.width,
-          _inkH: glyphCanvas.height,
-          cellPosition,
-          pageCalibration: page.pageCalibration,
-          status: 'extracted'
-        })
-        
-      } catch (error) {
-        console.error(`Failed to extract glyph ${i} (${char}):`, error)
-        
-        glyphs.push({
-          id: `p${page.pageNumber}-${i}-${char}`,
-          index: i + 1,
-          pageNumber: page.pageNumber,
-          ch: char,
-          status: 'error',
-          error: error.message
-        })
-      }
-    }
-    
-    return glyphs
+    return []
   }
 
   /**
@@ -285,25 +287,39 @@ export class VisionEngine {
     const cropWidth = Math.max(20, Math.min(width, pageWidth - cropX))
     const cropHeight = Math.max(20, Math.min(height, pageHeight - cropY))
     
-    // Create glyph canvas
+    // Create glyph canvas with white background (drawImage preserves rendering)
     const glyphCanvas = document.createElement('canvas')
     glyphCanvas.width = cropWidth
     glyphCanvas.height = cropHeight
     const glyphCtx = glyphCanvas.getContext('2d')
     
-    // Extract image data
-    const imageData = ctx.getImageData(cropX, cropY, cropWidth, cropHeight)
-    glyphCtx.putImageData(imageData, 0, 0)
+    // Fill white background first so ink detection works correctly
+    glyphCtx.fillStyle = '#ffffff'
+    glyphCtx.fillRect(0, 0, cropWidth, cropHeight)
+    
+    // Use drawImage to copy region — preserves pixel quality
+    glyphCtx.drawImage(
+      ctx.canvas,
+      cropX, cropY, cropWidth, cropHeight,
+      0, 0, cropWidth, cropHeight
+    )
     
     return glyphCanvas
   }
 
   /**
-   * Step 3: Apply smart cropping
+   * Step 3: Apply smart cropping + generate preview
    */
   async applySmartCropping(glyphs) {
     if (!this.pipelineConfig.enableSmartCrop) {
-      return glyphs
+      // Still need to generate previews even if smart crop is disabled
+      return glyphs.map(glyph => {
+        const canvas = glyph.canvas || glyph._inkCanvas
+        return {
+          ...glyph,
+          preview: (canvas && typeof canvas.toDataURL === 'function') ? canvas.toDataURL('image/png') : null
+        }
+      })
     }
     
     const batchSize = this.pipelineConfig.batchSize
@@ -312,7 +328,15 @@ export class VisionEngine {
     for (let i = 0; i < glyphs.length; i += batchSize) {
       const batch = glyphs.slice(i, i + batchSize)
       const batchResult = this.smartCropEngine.batchSmartCrop(batch)
-      results.push(...batchResult.results)
+      // Generate preview from cropped canvas for each glyph
+      const withPreviews = batchResult.results.map(glyph => {
+        const previewCanvas = glyph._smartCroppedCanvas || glyph.canvas || glyph._inkCanvas
+        const preview = (previewCanvas && typeof previewCanvas.toDataURL === 'function')
+          ? previewCanvas.toDataURL('image/png')
+          : null
+        return { ...glyph, preview }
+      })
+      results.push(...withPreviews)
     }
     
     return results
