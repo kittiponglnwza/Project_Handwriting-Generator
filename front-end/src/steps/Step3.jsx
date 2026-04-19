@@ -48,14 +48,6 @@ import { VisionEngine } from "../core/vision/VisionEngine.js"
 import QADashboard from "../components/QADashboard.jsx"
 
 export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
-  // ── Guard: should never render without parsedFile, but be safe ────────────
-  console.log('=== STEP3 COMPONENT LOADING ===')
-  console.log('ParsedFile:', parsedFile)
-  
-  // Test object rendering - this should cause the error
-  const testObject = { label: "Test", val: 123, color: "red" }
-  console.log('Test object:', testObject)
-  
   const chars = parsedFile?.characters ?? []
 
   // NEW: State machine integration
@@ -111,10 +103,7 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
     
     // Initialize Vision Engine with error handling
     try {
-      console.log('Initializing Vision Engine...')
       visionEngineRef.current = new VisionEngine()
-      console.log('Vision Engine initialized successfully')
-      console.log('Vision Engine methods available:', Object.getOwnPropertyNames(visionEngineRef.current))
     } catch (error) {
       console.error('Failed to initialize Vision Engine:', error)
       console.error('Error stack:', error.stack)
@@ -170,39 +159,28 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
 
   // NEW: Vision Engine handler (production quality extraction)
   const handleVisionEngineExtraction = useCallback(async () => {
-    console.log('=== VISION ENGINE EXTRACTION STARTED ===')
-    console.log('PageRef current:', pageRef.current)
-    console.log('Vision Engine ref:', visionEngineRef.current)
-    console.log('Chars length:', chars.length)
-    console.log('Engine mode:', engineMode)
     
     if (!pageRef.current?.pages || !visionEngineRef.current) {
       console.error('Vision Engine extraction aborted: missing pages or engine')
       return
     }
     
-    console.log('Setting autoAligning to true...')
     setAutoAligning(true)
     setError("")
     
     try {
-      console.log('About to call processPages...')
       const results = await visionEngineRef.current.processPages(
         pageRef.current.pages,
         chars,
         calibration
       )
       
-      console.log('Vision Engine results received:', results)
       
-      console.log('Setting visionEngineResults...')
       setVisionEngineResults(results)
-      console.log('Vision Engine results set!')
       
       // Update auto info with Vision Engine results
       const avgConfidence = (results.qaReport.averageConfidence * 100).toFixed(1)
       const infoMessage = `Vision Engine: ${results.glyphs.length} glyphs extracted (avg confidence ${avgConfidence}%, processing time ${results.processingTime.toFixed(0)}ms)`
-      console.log('Setting auto info:', infoMessage)
       setAutoInfo(infoMessage)
       
       // Check memory usage
@@ -212,7 +190,6 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
       console.error('Error details:', error.stack)
       setError(`Vision Engine error: ${error.message}`)
     } finally {
-      console.log('Setting autoAligning to false...')
       setAutoAligning(false)
     }
   }, [chars, calibration])
@@ -270,26 +247,9 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
 
   // ── Auto-run Vision Engine when pages are loaded ───────────────────────
   useEffect(() => {
-    console.log('=== AUTO-RUN VISION ENGINE CHECK ===')
-    console.log('Engine mode:', engineMode)
-    console.log('Has pages:', pageRef.current?.pages?.length > 0)
-    console.log('Chars length:', chars.length)
-    console.log('Has results:', !!visionEngineResults)
-    console.log('Is aligning:', autoAligning)
-    console.log('Should run:', engineMode === "vision" && pageRef.current?.pages?.length > 0 && chars.length > 0 && !visionEngineResults && !autoAligning)
     
     if (engineMode === "vision" && pageRef.current?.pages?.length > 0 && chars.length > 0 && !visionEngineResults && !autoAligning) {
-      console.log('*** AUTO-RUNNING VISION ENGINE ***')
       handleVisionEngineExtraction()
-    } else {
-      console.log('*** NOT RUNNING VISION ENGINE ***')
-      console.log('Reason:', {
-        mode: engineMode,
-        hasPages: pageRef.current?.pages?.length > 0,
-        hasChars: chars.length > 0,
-        hasResults: !!visionEngineResults,
-        isAligning: autoAligning
-      })
     }
   }, [engineMode, pageRef.current?.pages?.length, chars.length, visionEngineResults, autoAligning, handleVisionEngineExtraction])
 
@@ -376,7 +336,6 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
 
       let pageMaxCells
       // DEBUG: log pageMeta per page
-      console.log(`[PAGE_DEBUG] page=${page.pageNumber} pageMeta=`, JSON.stringify(page.pageMeta), `cursor=${cursor} remainingChars=${remainingChars}`)
       if (page.pageMeta?.cellCount > 0) {
         pageMaxCells = Math.min(page.pageMeta.cellCount, remainingChars)
       } else {
@@ -604,12 +563,8 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
   }
 
   // ── Guards ────────────────────────────────────────────────────────
-  console.log('=== STEP3 RENDER CHECK ===')
-  console.log('ParsedFile exists:', !!parsedFile)
-  console.log('About to check guard...')
   
   if (!parsedFile) {
-    console.log('No parsedFile - showing guard message')
     return (
       <div className="fade-up">
         <InfoBox color="amber">กรุณาอัปโหลดไฟล์ PDF ใน Step 2 ก่อน</InfoBox>
@@ -617,7 +572,6 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
     )
   }
   
-  console.log('ParsedFile exists - continuing to render...')
 
   if (chars.length === 0) {
     return (

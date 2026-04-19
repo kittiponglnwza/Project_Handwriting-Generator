@@ -195,38 +195,45 @@ export function buildGPOS(glyphInfo) {
     return null
   }
 
-  // ── Mark Array (above marks) ───────────────────────────────────────────────
+  // ── Mark Array ────────────────────────────────────────────────────────────
   // Mark class 0 = above, class 1 = below
+  //
+  // Attach point = where the mark connects to the base anchor.
+  // Because fontBuilder.js zone-fits every mark path into its zone, we use
+  // the zone boundary as the attach point — NOT the raw bbox edge.
+  //
+  //   Above mark  → attach at BOTTOM of its zone  (mark "hangs down" from base top)
+  //   Below mark  → attach at TOP of its zone     (mark "sits up" from base bottom)
   const markArray = [
     ...aboveMarks.map(m => ({
       glyphIndex: m.glyphIndex,
       markClass: 0,
-      // Attach point: bottom-centre of the mark glyph
       anchor: {
         x: _centreX(m.metrics),
-        y: _bottomY(m.metrics),
+        y: _markAboveAttachY(m.cp),   // zone bottom — correct attach point
       },
     })),
     ...belowMarks.map(m => ({
       glyphIndex: m.glyphIndex,
       markClass: 1,
-      // Attach point: top-centre of the mark glyph
       anchor: {
         x: _centreX(m.metrics),
-        y: _topY(m.metrics),
+        y: _markBelowAttachY(),        // zone top — correct attach point
       },
     })),
   ]
 
   // ── Base Array ─────────────────────────────────────────────────────────────
-  // For each base, two anchor records: class 0 (above) and class 1 (below)
+  // Base anchors point to where the mark will attach:
+  //   class 0 (above): just above the consonant top — ~10 fu clearance
+  //   class 1 (below): just below the consonant bottom — ~10 fu clearance
   const baseArray = baseGlyphs.map(b => ({
     glyphIndex: b.glyphIndex,
     anchors: [
-      // class 0 — above: top-centre of base
-      { x: _centreX(b.metrics), y: _topY(b.metrics) + 60 },
-      // class 1 — below: bottom-centre of base
-      { x: _centreX(b.metrics), y: _bottomY(b.metrics) - 40 },
+      // class 0 — above: top of consonant body in font units
+      { x: _centreX(b.metrics), y: _topY(b.metrics) },
+      // class 1 — below: bottom of consonant body in font units
+      { x: _centreX(b.metrics), y: _bottomY(b.metrics) },
     ],
   }))
 
@@ -271,6 +278,17 @@ export function buildGPOS(glyphInfo) {
 }
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
+
+// ── Zone constants (must match fontBuilder.js) ────────────────────────────────
+// These are font-unit (Y-up) ranges that fontBuilder bakes mark paths into.
+const _ZONES = {
+  above_vowel: [630, 760],
+  tone:        [770, 800],
+  below:       [-400, -210],
+}
+const _THAI_ABOVE_FT = new Set([0x0E31,0x0E34,0x0E35,0x0E36,0x0E37,0x0E47,0x0E4D,0x0E4E])
+const _THAI_BELOW_FT = new Set([0x0E38,0x0E39,0x0E3A])
+const _THAI_TONES_FT = new Set([0x0E48,0x0E49,0x0E4A,0x0E4B])
 
 /**
  * Build calt chaining-context lookup rules.
@@ -333,20 +351,42 @@ function _buildSingleSubstSubtable(pairs) {
   }
 }
 
-// Anchor coordinate helpers (font units)
+// Anchor coordinate helpers (font units, Y-up)
+//
+// metrics.bbox comes from computePathBBox() which operates in raw SVG 0-100
+// space (Y-down).  We must convert to font units using the same transform that
+// fontBuilder.js uses when it bakes paths into the .ttf:
+//
 function _centreX(metrics) {
-  if (!metrics?.bbox) return 200
-  return Math.round(metrics.lsb + metrics.bbox.width / 2)
+  if (!metrics?.bbox) return 450  // 50 * SCALE — GlyphNormalizer centres at x≈50
+  // bbox.xMin/xMax are already in font units (computePathBBox does x * SCALE)
+  return Math.round((metrics.bbox.xMin + metrics.bbox.xMax) / 2)
 }
 
+// Base consonant: top anchor = top of consonant body in font units
 function _topY(metrics) {
-  if (!metrics?.bbox) return 700
+  if (!metrics?.bbox) return 610
+  // bbox.yMax is already in font units (Y-up)
   return Math.round(metrics.bbox.yMax)
 }
 
+// Base consonant: bottom anchor = bottom of consonant body in font units
 function _bottomY(metrics) {
-  if (!metrics?.bbox) return 0
+  if (!metrics?.bbox) return -200
+  // bbox.yMin is already in font units (Y-up)
   return Math.round(metrics.bbox.yMin)
+}
+
+// Mark attach anchor: bottom of an above-mark in font units
+// Since marks are zone-fit, we use the zone bottom directly.
+function _markAboveAttachY(cp) {
+  if (_THAI_TONES_FT.has(cp)) return _ZONES.tone[0]        // bottom of tone zone
+  return _ZONES.above_vowel[0]                              // bottom of above-vowel zone
+}
+
+// Mark attach anchor: top of a below-mark in font units
+function _markBelowAttachY() {
+  return _ZONES.below[1]  // top of below zone
 }
 
 // ─── Feature status reporter ───────────────────────────────────────────────────

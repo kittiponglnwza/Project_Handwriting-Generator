@@ -117,7 +117,9 @@ const WIDE_LATIN = new Set([
  */
 export function getGlyphClass(cp) {
   if (cp === 0x0020) return 'space'
-  if (THAI_ABOVE_VOWELS.has(cp) || THAI_TONES.has(cp)) return 'thai_above'
+  if (THAI_TONES.has(cp)) return 'thai_tone'          // ่ ้ ๊ ๋  — tone marks (above, own zone)
+  if (THAI_ABOVE_VOWELS.has(cp)) return 'thai_above'  // ั ิ ี ึ ื ็ ํ ๎
+  if (cp === 0x0E4C) return 'thai_above'              // ์ thanthakat — silent mark (non-spacing, above)
   if (THAI_BELOW_VOWELS.has(cp)) return 'thai_below'
   if (THAI_RIGHT_VOWELS.has(cp)) return 'thai_right'
   if (THAI_LEADING_VOWELS.has(cp)) return 'thai_leading'
@@ -149,7 +151,8 @@ export function isThaiNonSpacing(cp) {
   return (
     THAI_ABOVE_VOWELS.has(cp) ||
     THAI_BELOW_VOWELS.has(cp) ||
-    THAI_TONES.has(cp)
+    THAI_TONES.has(cp) ||
+    cp === 0x0E4C  // ์ thanthakat — silent mark, non-spacing
     // NOTE: THAI_LEADING_VOWELS (เ แ โ ใ ไ) intentionally excluded here.
     // Leading vowels appear to the LEFT of the consonant and must carry a real
     // advance width derived from their actual bbox, so the shaping engine places

@@ -322,11 +322,13 @@ function buildNotdefGlyph() {
 export function buildGlyphMap(glyphs) {
   const byChar = {}
 
+  const GOOD_STATUSES = new Set(['ok', 'excellent', 'good', 'acceptable'])
+
   for (const g of glyphs) {
     if (!g.ch) continue
-    const isOk =
-      g.status === 'ok' ||
-      ['excellent', 'good', 'acceptable'].includes(g._visionStatus)
+    // VisionEngine stores quality in g.status ('excellent'|'good'|'acceptable'|'poor'|'critical'|'missing'|'error')
+    // Legacy pipeline stores 'ok'. Accept both.
+    const isOk = GOOD_STATUSES.has(g.status) || GOOD_STATUSES.has(g._visionStatus)
     if (!isOk) continue
     if (!byChar[g.ch]) byChar[g.ch] = []
     byChar[g.ch].push(g)
