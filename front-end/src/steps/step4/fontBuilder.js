@@ -153,57 +153,63 @@ export function svgPathToOTCommands(svgPath, cp = 0) {
     below:       [-400, -210],
   }
 
-  // Default converter for non-marks
+  // Default converters for non-marks (identity X scale, baseline-shifted Y)
+  let toFontX = (svgX) => svgX * SCALE
   let toFontY = (svgY) => (100 - svgY) * SCALE + BASELINE_SHIFT
 
   if (isMark) {
-    // ── Pass 1: collect SVG Y values → find raw font bbox ──────────────────
-    const yVals = []
+    // ── Pass 1: collect all SVG X and Y values for bbox ────────────────────
+    const xVals = [], yVals = []
     const _tokens = svgPath.trim().split(/(?=[MLCQZz])/)
     for (const tok of _tokens) {
       const _cmd = tok.trim()[0]
       if (!_cmd || _cmd === 'Z' || _cmd === 'z') continue
       const _nums = tok.slice(1).trim().split(/[\s,]+/).map(Number).filter(n => !isNaN(n) && isFinite(n))
       if (_cmd === 'M' || _cmd === 'L') {
-        for (let i = 1; i < _nums.length; i += 2) yVals.push(_nums[i])
+        for (let i = 0; i + 1 < _nums.length; i += 2) {
+          xVals.push(_nums[i]); yVals.push(_nums[i+1])
+        }
       } else if (_cmd === 'C') {
         for (let i = 0; i + 5 < _nums.length; i += 6) {
+          xVals.push(_nums[i], _nums[i+2], _nums[i+4])
           yVals.push(_nums[i+1], _nums[i+3], _nums[i+5])
         }
       } else if (_cmd === 'Q') {
         for (let i = 0; i + 3 < _nums.length; i += 4) {
+          xVals.push(_nums[i], _nums[i+2])
           yVals.push(_nums[i+1], _nums[i+3])
         }
       }
     }
 
+    // ── Pass 2: Y zone-fit transform ────────────────────────────────────────
     if (yVals.length > 0) {
-      // Raw font Y values (Y-up, no shift yet)
-      const fontTop_raw = (100 - Math.min(...yVals)) * SCALE   // highest fu
-      const fontBot_raw = (100 - Math.max(...yVals)) * SCALE   // lowest fu
+      const fontTop_raw = (100 - Math.min(...yVals)) * SCALE
+      const fontBot_raw = (100 - Math.max(...yVals)) * SCALE
       const rawHeight   = fontTop_raw - fontBot_raw
 
-      // ── Pass 2: pick zone and compute scale + offset ──────────────────────
       const _isTone = _THAI_TONES.has(cp)
       const zone = isLowerMark
         ? ZONES.below
         : (_isTone ? ZONES.tone : ZONES.above_vowel)
-
       const [zBot, zTop] = zone
       const zHeight = zTop - zBot
 
       if (rawHeight > 1) {
-        // Linear map: (100−svgY)×SCALE → [zBot, zTop]
         const markScale  = zHeight / rawHeight
         const markOffset = zBot - fontBot_raw * markScale
         toFontY = (svgY) => (100 - svgY) * SCALE * markScale + markOffset
       } else {
-        // Degenerate path — just center on zone midpoint
         const zMid = (zBot + zTop) / 2
         toFontY = (svgY) => (100 - svgY) * SCALE + (zMid - (fontBot_raw + rawHeight / 2))
       }
     }
-    // If no Y values found, toFontY stays as BASELINE_SHIFT default
+
+    // ── X: no shift needed ───────────────────────────────────────────────────
+    // GlyphNormalizer centers every glyph (including marks) horizontally in the
+    // 0-100 SVG canvas, so svgXCenter ≈ 50 for both consonants and marks alike.
+    // After ×SCALE both land at ~450 fu — no extra X translation required.
+    // toFontX stays as the identity: svgX × SCALE.
   }
 
   const cmds   = []
@@ -230,14 +236,14 @@ export function svgPathToOTCommands(svgPath, cp = 0) {
         for (let i = 0; i + 1 < nums.length; i += 2) {
           cmds.push({
             type: i === 0 ? 'M' : 'L',
-            x: nums[i]   * SCALE,
+            x: toFontX(nums[i]),
             y: toFontY(nums[i + 1]),
           })
         }
         break
       case 'L':
         for (let i = 0; i + 1 < nums.length; i += 2) {
-          cmds.push({ type: 'L', x: nums[i] * SCALE, y: toFontY(nums[i + 1]) })
+          cmds.push({ type: 'L', x: toFontX(nums[i]), y: toFontY(nums[i + 1]) })
         }
         break
       case 'C':
@@ -245,9 +251,9 @@ export function svgPathToOTCommands(svgPath, cp = 0) {
         for (let i = 0; i + 5 < nums.length; i += 6) {
           cmds.push({
             type: 'C',
-            x1: nums[i]   * SCALE, y1: toFontY(nums[i+1]),
-            x2: nums[i+2] * SCALE, y2: toFontY(nums[i+3]),
-            x:  nums[i+4] * SCALE, y:  toFontY(nums[i+5]),
+            x1: toFontX(nums[i]),   y1: toFontY(nums[i+1]),
+            x2: toFontX(nums[i+2]), y2: toFontY(nums[i+3]),
+            x:  toFontX(nums[i+4]), y:  toFontY(nums[i+5]),
           })
         }
         break
@@ -256,8 +262,8 @@ export function svgPathToOTCommands(svgPath, cp = 0) {
         for (let i = 0; i + 3 < nums.length; i += 4) {
           cmds.push({
             type: 'Q',
-            x1: nums[i]   * SCALE, y1: toFontY(nums[i+1]),
-            x:  nums[i+2] * SCALE, y:  toFontY(nums[i+3]),
+            x1: toFontX(nums[i]),   y1: toFontY(nums[i+1]),
+            x:  toFontX(nums[i+2]), y:  toFontY(nums[i+3]),
           })
         }
         break

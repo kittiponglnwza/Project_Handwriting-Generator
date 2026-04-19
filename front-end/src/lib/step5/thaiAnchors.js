@@ -101,8 +101,13 @@ export function calculateAnchorPositions(cluster, fontSize = 32) {
 
       case ThaiAnchorType.BOTTOM:
         // Lower vowels (ุ ู ฺ): sit below consonant descender.
+        // offsetY must be large enough to clear the full consonant body.
+        // 0.40 * scale ≈ 10px at fs=32 — too small (only 28% of slotH).
+        // 0.60 * fontSize ≈ 19px — clears consonant bottom comfortably.
+        // Note: offsetY is NOT multiplied by scale so the shift is
+        // consonant-relative, not mark-size-relative.
         scale   =  0.78
-        offsetY = +0.40 * fontSize * scale
+        offsetY = +0.60 * fontSize
         offsetX =  0.0
         break
 
