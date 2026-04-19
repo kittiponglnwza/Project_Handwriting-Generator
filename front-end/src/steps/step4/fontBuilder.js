@@ -109,28 +109,93 @@ export function svgPathToOTCommands(svgPath, cp = 0) {
 
   // ── Thai mark zone override (Bug 2) ──────────────────────────────────────
   // opentype.js 1.3.x cannot write GPOS, so we bake Y positions directly into
-  // the path.  The mark glyph is drawn relative to 0-100 SVG space, then
-  // remapped into a font-unit zone that places it above or below consonants.
+  // the path.  The mark glyph is drawn relative to 0-100 SVG space (Y-down),
+  // scaled ×9 → occupies ~450 fu height at full scale.
   //
-  //   Upper marks (ิ ี ่ ้ ็ ํ ๎) → target zone centre ≈ 680 font units
-  //   Lower marks (ุ ู ฺ)          → target zone centre ≈ -300 font units
+  // Consonant body after BASELINE_SHIFT ≈ -245:
+  //   bottom = DESCENDER = -200 fu
+  //   top    = (100 - 5) * 9 + (-245) = 855 - 245 = 610 fu
   //
-  // Strategy: replace BASELINE_SHIFT with a zone-specific shift so that the
-  // mark's midpoint (svgY ≈ 50) maps to the desired font-unit centre.
-  //   mark_mid_font = (100 - 50) * SCALE + shift = 450 + shift
-  //   shift = target_centre - 450
+  // To clear the consonant completely we need:
+  //   Upper marks: mark bottom ≥ top_of_consonant + gap
+  //     mark height ~450 fu  → bottom = centre - 225
+  //     need centre - 225 ≥ 610 + 30  → centre ≥ 865
+  //     use centre = 900 fu  → shift = 900 - 450 = 450
+  //
+  //   Lower marks: mark top ≤ bottom_of_consonant - gap
+  //     mark height ~450 fu  → top = centre + 225
+  //     need centre + 225 ≤ -200 - 30  → centre ≤ -455
+  //     use centre = -500 fu → shift = -500 - 450 = -950
+  //
+  // "mark_mid_font = (100 - 50) * SCALE + shift = 450 + shift"
   const _THAI_ABOVE = new Set([0x0E31,0x0E34,0x0E35,0x0E36,0x0E37,0x0E47,0x0E4D,0x0E4E])
   const _THAI_BELOW = new Set([0x0E38,0x0E39,0x0E3A])
   const _THAI_TONES = new Set([0x0E48,0x0E49,0x0E4A,0x0E4B])
 
-  let markShift = null
-  if (_THAI_ABOVE.has(cp) || _THAI_TONES.has(cp)) {
-    markShift = 680 - 450  // upper marks: centre at 680 fu
-  } else if (_THAI_BELOW.has(cp)) {
-    markShift = -300 - 450  // lower marks: centre at -300 fu
+  const isUpperMark = _THAI_ABOVE.has(cp) || _THAI_TONES.has(cp)
+  const isLowerMark = _THAI_BELOW.has(cp)
+  const isMark      = isUpperMark || isLowerMark
+
+  // ── 2-pass bbox-anchored placement for Thai marks ────────────────────────
+  // Pass 1: scan all Y coords in SVG space to find actual yMin/yMax of this mark.
+  // Pass 2: compute per-glyph shift so that:
+  //   upper marks → mark bottom lands at CONSONANT_TOP + GAP
+  //   lower marks → mark top   lands at DESCENDER    - GAP
+  // This is robust regardless of where in 0-100 the artist drew the mark.
+  let effectiveShift = BASELINE_SHIFT
+
+  if (isMark) {
+    const yVals = []
+    const _tokens = svgPath.trim().split(/(?=[MLCQZz])/)
+    for (const tok of _tokens) {
+      const _cmd = tok.trim()[0]
+      if (!_cmd || _cmd === 'Z' || _cmd === 'z') continue
+      const _nums = tok.slice(1).trim().split(/[\s,]+/).map(Number).filter(n => !isNaN(n) && isFinite(n))
+      // Extract only Y values — stride depends on command type
+      if (_cmd === 'M' || _cmd === 'L') {
+        // M/L: x y x y … — Y at indices 1,3,5,…
+        for (let i = 1; i < _nums.length; i += 2) yVals.push(_nums[i])
+      } else if (_cmd === 'C') {
+        // C: x1 y1 x2 y2 x y [repeat] — Y at indices 1,3,5 per 6-tuple
+        for (let i = 0; i + 5 < _nums.length; i += 6) {
+          yVals.push(_nums[i+1], _nums[i+3], _nums[i+5])
+        }
+      } else if (_cmd === 'Q') {
+        // Q: x1 y1 x y [repeat] — Y at indices 1,3 per 4-tuple
+        for (let i = 0; i + 3 < _nums.length; i += 4) {
+          yVals.push(_nums[i+1], _nums[i+3])
+        }
+      }
+    }
+
+    if (yVals.length > 0) {
+      const svgYMin = Math.min(...yVals)  // topmost in Y-down space
+      const svgYMax = Math.max(...yVals)  // bottommost in Y-down space
+
+      // Upper marks split into two tiers to prevent tone+vowel overlap:
+      //   Above vowels (ิ ี ็ ํ) → bottom lands just above consonant top
+      //   Tone marks   (่ ้ ๊ ๋) → bottom lands above the above-vowel tier
+      const _isTone = _THAI_TONES.has(cp)
+      const CONSONANT_TOP  = 620  // fu — empirical top of consonant body
+      const ABOVE_VOW_TOP  = 760  // fu — estimated top of above-vowel tier
+      const GAP            = 20   // fu — minimum clearance
+
+      if (isUpperMark) {
+        const anchorBottom = _isTone
+          ? ABOVE_VOW_TOP + GAP   // tones sit above vowel tier
+          : CONSONANT_TOP + GAP   // vowels sit just above consonant
+        // mark bottom = (100 - svgYMax) * SCALE + shift
+        // => shift = anchorBottom - (100 - svgYMax) * SCALE
+        effectiveShift = anchorBottom - (100 - svgYMax) * SCALE
+      } else {
+        // Want mark top (highest font Y) = DESCENDER - GAP
+        // mark top = (100 - svgYMin) * SCALE + shift
+        // => shift = (DESCENDER - GAP) - (100 - svgYMin) * SCALE
+        effectiveShift = (DESCENDER - GAP) - (100 - svgYMin) * SCALE
+      }
+    }
   }
 
-  const effectiveShift = markShift !== null ? markShift : BASELINE_SHIFT
   const toFontY = (svgY) => (100 - svgY) * SCALE + effectiveShift
 
   const cmds   = []
