@@ -149,8 +149,11 @@ export function isThaiNonSpacing(cp) {
   return (
     THAI_ABOVE_VOWELS.has(cp) ||
     THAI_BELOW_VOWELS.has(cp) ||
-    THAI_TONES.has(cp) ||
-    THAI_LEADING_VOWELS.has(cp)
+    THAI_TONES.has(cp)
+    // NOTE: THAI_LEADING_VOWELS (เ แ โ ใ ไ) intentionally excluded here.
+    // Leading vowels appear to the LEFT of the consonant and must carry a real
+    // advance width derived from their actual bbox, so the shaping engine places
+    // them correctly (เ left-of ก, not overlapping ก).
   )
 }
 

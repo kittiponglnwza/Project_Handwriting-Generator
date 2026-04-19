@@ -86,9 +86,10 @@ export function validateSvgPath(svgPath) {
  * (UPM space, Y-up).  Handles M, L, C, Q, Z.
  *
  * @param {string} svgPath
+ * @param {number} [cp=0] - Unicode codepoint; used to pick Thai mark Y-zone
  * @returns {object[]} array of opentype.js path command objects
  */
-export function svgPathToOTCommands(svgPath) {
+export function svgPathToOTCommands(svgPath, cp = 0) {
   const validation = validateSvgPath(svgPath)
   if (!validation.valid) return []
 
@@ -106,7 +107,31 @@ export function svgPathToOTCommands(svgPath) {
   const GLYPH_BOTTOM_SVG = 95           // SVG y of glyph bottom (100 - PAD)
   const BASELINE_SHIFT   = DESCENDER - ((100 - GLYPH_BOTTOM_SVG) * SCALE)  // ≈ -245
 
-  const toFontY = (svgY) => (100 - svgY) * SCALE + BASELINE_SHIFT
+  // ── Thai mark zone override (Bug 2) ──────────────────────────────────────
+  // opentype.js 1.3.x cannot write GPOS, so we bake Y positions directly into
+  // the path.  The mark glyph is drawn relative to 0-100 SVG space, then
+  // remapped into a font-unit zone that places it above or below consonants.
+  //
+  //   Upper marks (ิ ี ่ ้ ็ ํ ๎) → target zone centre ≈ 680 font units
+  //   Lower marks (ุ ู ฺ)          → target zone centre ≈ -300 font units
+  //
+  // Strategy: replace BASELINE_SHIFT with a zone-specific shift so that the
+  // mark's midpoint (svgY ≈ 50) maps to the desired font-unit centre.
+  //   mark_mid_font = (100 - 50) * SCALE + shift = 450 + shift
+  //   shift = target_centre - 450
+  const _THAI_ABOVE = new Set([0x0E31,0x0E34,0x0E35,0x0E36,0x0E37,0x0E47,0x0E4D,0x0E4E])
+  const _THAI_BELOW = new Set([0x0E38,0x0E39,0x0E3A])
+  const _THAI_TONES = new Set([0x0E48,0x0E49,0x0E4A,0x0E4B])
+
+  let markShift = null
+  if (_THAI_ABOVE.has(cp) || _THAI_TONES.has(cp)) {
+    markShift = 680 - 450  // upper marks: centre at 680 fu
+  } else if (_THAI_BELOW.has(cp)) {
+    markShift = -300 - 450  // lower marks: centre at -300 fu
+  }
+
+  const effectiveShift = markShift !== null ? markShift : BASELINE_SHIFT
+  const toFontY = (svgY) => (100 - svgY) * SCALE + effectiveShift
 
   const cmds   = []
   // Split on every command letter, keeping the letter
@@ -128,13 +153,18 @@ export function svgPathToOTCommands(svgPath) {
 
     switch (cmd) {
       case 'M':
-        if (nums.length >= 2) {
-          cmds.push({ type: 'M', x: nums[0] * SCALE, y: toFontY(nums[1]) })
+        // SVG spec: first pair is moveTo, subsequent pairs are implicit lineTo
+        for (let i = 0; i + 1 < nums.length; i += 2) {
+          cmds.push({
+            type: i === 0 ? 'M' : 'L',
+            x: nums[i]   * SCALE,
+            y: toFontY(nums[i + 1]),
+          })
         }
         break
       case 'L':
-        if (nums.length >= 2) {
-          cmds.push({ type: 'L', x: nums[0] * SCALE, y: toFontY(nums[1]) })
+        for (let i = 0; i + 1 < nums.length; i += 2) {
+          cmds.push({ type: 'L', x: nums[i] * SCALE, y: toFontY(nums[i + 1]) })
         }
         break
       case 'C':
@@ -340,12 +370,12 @@ export async function compileFontBuffer(glyphMap, fontName = FONT_NAME, onProgre
       const hex     = cp.toString(16).toUpperCase().padStart(Math.max(4, cp.toString(16).length % 2 === 0 ? cp.toString(16).length : cp.toString(16).length + 1), '0')
       const name    = `uni${hex}`
 
-      const defCmds  = svgPathToOTCommands(defPath)
+      const defCmds  = svgPathToOTCommands(defPath, cp)
       const alt1Cmds = validateSvgPath(alt1Path).valid
-        ? svgPathToOTCommands(alt1Path)
+        ? svgPathToOTCommands(alt1Path, cp)
         : defCmds
       const alt2Cmds = validateSvgPath(alt2Path).valid
-        ? svgPathToOTCommands(alt2Path)
+        ? svgPathToOTCommands(alt2Path, cp)
         : defCmds
 
       // ── Default glyph (carries the Unicode codepoint) ─────────────────
