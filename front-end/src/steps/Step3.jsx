@@ -76,9 +76,12 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
   const workerAdapterRef = useRef(null)
   const visionEngineRef = useRef(null)
 
-  // ── Initialize state machine and worker adapter ─────────────────────────────
+  // ── Initialize state machine and worker adapter (singleton — mount once) ───
   useEffect(() => {
-    const stateMachine = new PipelineStateMachine()
+    // Guard: ถ้า refs ถูก set แล้ว (HMR / StrictMode double-invoke) ไม่ต้อง re-create
+    if (stateMachineRef.current) return
+
+    const stateMachine  = new PipelineStateMachine()
     const workerAdapter = new GlyphWorkerAdapter(2)
     
     // Subscribe to state changes
@@ -98,7 +101,7 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
       }))
     })
     
-    stateMachineRef.current = stateMachine
+    stateMachineRef.current  = stateMachine
     workerAdapterRef.current = workerAdapter
     
     // Initialize Vision Engine with error handling
@@ -106,16 +109,18 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
       visionEngineRef.current = new VisionEngine()
     } catch (error) {
       console.error('Failed to initialize Vision Engine:', error)
-      console.error('Error stack:', error.stack)
       setError(`Vision Engine initialization failed: ${error.message}`)
     }
-    
     
     return () => {
       unsubscribe()
       telemetryUnsubscribe()
       workerAdapter.cleanup()
       visionEngineRef.current?.reset()
+      // Reset refs on true unmount so they can be re-initialized if component remounts
+      stateMachineRef.current  = null
+      workerAdapterRef.current = null
+      visionEngineRef.current  = null
     }
   }, [])
 

@@ -305,14 +305,17 @@ export default function App() {
             padding: step === 5 ? 0 : "28px 32px",
             background: step === 5 ? "#E7E6E6" : C.bg,
           }}>
-            {/* Step 4 ต้องไม่ถูก unmount เพื่อให้ auto-build ทำงานและ ttfBuffer ถึง Step 5
-                ใช้ display:none แทน conditional render */}
-            <div style={{ display: step === 4 ? "contents" : "none" }}>
-              <Step4
-                glyphs={appState.glyphResult?.glyphs ?? []}
-                onFontReady={handleFontReady}
-              />
-            </div>
+            {/* Step 4 mount เมื่อ glyphs พร้อมแล้วเท่านั้น (มี glyphResult)
+                ซ่อนด้วย display:none แทน unmount เพื่อให้ ttfBuffer คงอยู่ถึง Step 5
+                ไม่ mount ตั้งแต่ step 1-3 เพื่อป้องกัน auto-build ก่อนเวลา */}
+            {(appState.glyphResult?.glyphs?.length ?? 0) > 0 && (
+              <div style={{ display: step === 4 ? "contents" : "none" }}>
+                <Step4
+                  glyphs={appState.glyphResult?.glyphs ?? []}
+                  onFontReady={handleFontReady}
+                />
+              </div>
+            )}
             {step !== 4 && content[step]}
           </main>
 

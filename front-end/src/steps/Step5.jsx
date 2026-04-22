@@ -173,53 +173,74 @@ export default function Step5({ versionedGlyphs = [], extractedGlyphs = [], ttfB
   const exportPNG = useCallback(async () => {
     if (!paperRef.current) return
     setExp("png")
-    await new Promise(r => setTimeout(r, 120)) // ให้ font render ก่อน
+    // รอให้ font render ก่อน
+    await new Promise(r => setTimeout(r, 150))
 
     try {
-      const node   = paperRef.current
-      const SCALE  = 2  // 2× = Retina resolution
-      const w      = node.offsetWidth
-      const h      = node.offsetHeight
+      const node  = paperRef.current
+      const SCALE = 2  // 2× = Retina resolution
+      const w     = node.offsetWidth
+      const h     = node.offsetHeight
 
-      // ── serialize DOM node เป็น SVG foreignObject ──────────────────────
-      const xml    = new XMLSerializer().serializeToString(node)
-      const svgStr = [
-        `<svg xmlns="http://www.w3.org/2000/svg" width="${w * SCALE}" height="${h * SCALE}">`,
-        `<foreignObject x="0" y="0" width="${w}" height="${h}" transform="scale(${SCALE})">`,
-        xml,
-        `</foreignObject></svg>`,
-      ].join("")
+      // ── ใช้ html2canvas (CDN) เพื่อให้ custom font ถูก capture จริง ──
+      // XMLSerializer + SVG foreignObject จะ block custom font บน Chrome
+      const h2c = await import('https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.esm.min.js')
+        .catch(() => null)
 
-      const blob   = new Blob([svgStr], { type: "image/svg+xml;charset=utf-8" })
-      const url    = URL.createObjectURL(blob)
+      if (h2c) {
+        const canvas = await h2c.default(node, {
+          scale:           SCALE,
+          useCORS:         true,
+          allowTaint:      false,
+          backgroundColor: null,
+          logging:         false,
+          width:           w,
+          height:          h,
+        })
+        canvas.toBlob(pngBlob => {
+          const a    = document.createElement("a")
+          a.href     = URL.createObjectURL(pngBlob)
+          a.download = `handwriting-${Date.now()}.png`
+          a.click()
+          setTimeout(() => URL.revokeObjectURL(a.href), 5000)
+        }, "image/png")
+      } else {
+        // Fallback: ใช้ Canvas drawImage จาก font-face ที่ inject ไว้
+        // วาด text โดยตรงบน canvas ด้วย font ที่ถูก load แล้ว
+        const canvas   = document.createElement("canvas")
+        canvas.width   = w * SCALE
+        canvas.height  = h * SCALE
+        const ctx      = canvas.getContext("2d")
 
-      const img = await new Promise((resolve, reject) => {
-        const i  = new Image()
-        i.onload = () => resolve(i)
-        i.onerror = reject
-        i.src = url
-      })
+        // วาด background
+        ctx.fillStyle = paperRef.current.style.background || "#FFFFFF"
+        ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-      URL.revokeObjectURL(url)
+        // วาด text ด้วย font ที่ inject ไว้
+        ctx.scale(SCALE, SCALE)
+        ctx.font      = `${fontSize}px '${FONT_FAMILY}', 'Noto Sans Thai', sans-serif`
+        ctx.fillStyle = C.ink
+        ctx.textBaseline = "top"
 
-      const canvas = document.createElement("canvas")
-      canvas.width  = w * SCALE
-      canvas.height = h * SCALE
-      const ctx    = canvas.getContext("2d")
-      ctx.drawImage(img, 0, 0)
+        const lines = text.split("\n")
+        const lhPx  = fontSize * lineHeight
+        const padX  = A4W * zoom * (MARGIN / A4W)  // ≈ MARGIN * zoom
+        const padY  = padX
+        lines.forEach((line, i) => {
+          ctx.fillText(line, padX, padY + i * lhPx)
+        })
 
-      // ── download ────────────────────────────────────────────────────────
-      canvas.toBlob(pngBlob => {
-        const a  = document.createElement("a")
-        a.href   = URL.createObjectURL(pngBlob)
-        a.download = `handwriting-${Date.now()}.png`
-        a.click()
-        setTimeout(() => URL.revokeObjectURL(a.href), 5000)
-      }, "image/png")
-
+        canvas.toBlob(pngBlob => {
+          const a    = document.createElement("a")
+          a.href     = URL.createObjectURL(pngBlob)
+          a.download = `handwriting-${Date.now()}.png`
+          a.click()
+          setTimeout(() => URL.revokeObjectURL(a.href), 5000)
+        }, "image/png")
+      }
     } catch (err) {
       console.error("[exportPNG] failed:", err)
-      // Fallback — เปิดแท็บใหม่ให้ save เอง
+      // Last-resort fallback — เปิดแท็บใหม่
       const node = paperRef.current
       const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
         <style>body{margin:0;background:#E8E4DC;display:flex;justify-content:center;padding:40px}</style>
@@ -229,7 +250,7 @@ export default function Step5({ versionedGlyphs = [], extractedGlyphs = [], ttfB
     }
 
     setExp(null)
-  }, [])
+  }, [text, fontSize, lineHeight, zoom])
 
   // ── Font family string: ใช้ MyHandwriting ถ้า ready, fallback เป็น system ──
   const activeFontFamily = fontStatus === 'ready'
