@@ -114,6 +114,33 @@ export class PerformanceGovernor {
         availableWorker.busy = false
         this.processQueue()
       }
+    },
+
+    executeTask(workerEntry, task) {
+      return new Promise((resolve, reject) => {
+        const taskId = `wm_${Date.now()}_${Math.random().toString(36).slice(2)}`
+
+        const handler = (e) => {
+          if (e.data?.taskId !== taskId) return
+          workerEntry.instance.removeEventListener('message', handler)
+          workerEntry.instance.removeEventListener('error', errHandler)
+          if (e.data.error) {
+            reject(new Error(e.data.error))
+          } else {
+            resolve(e.data.result)
+          }
+        }
+
+        const errHandler = (err) => {
+          workerEntry.instance.removeEventListener('message', handler)
+          workerEntry.instance.removeEventListener('error', errHandler)
+          reject(err)
+        }
+
+        workerEntry.instance.addEventListener('message', handler)
+        workerEntry.instance.addEventListener('error', errHandler)
+        workerEntry.instance.postMessage({ taskId, ...task.data })
+      })
     }
   }
 

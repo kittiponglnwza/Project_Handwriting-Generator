@@ -65,6 +65,10 @@ const MARGIN = 64
 const FONT_FAMILY  = 'MyHandwriting'
 const STYLE_TAG_ID = 'my-handwriting-font-face'
 
+// Thai combining marks — สระ/วรรณยุกต์ที่ไม่มี glyph แยก (render ใน font cluster)
+// อยู่ระดับ module เพื่อให้ reference stable — ใส่ใน useMemo deps ได้ถูกต้อง
+const isThaiCombining = (c) => /[\u0E31\u0E34-\u0E3A\u0E47-\u0E4E]/.test(c)
+
 export default function Step5({ versionedGlyphs = [], extractedGlyphs = [], ttfBuffer = null }) {
 
   // ── Build lookup: char → glyph[] (Map, keyed by codepoint, value = array of all variants)
@@ -188,7 +192,8 @@ export default function Step5({ versionedGlyphs = [], extractedGlyphs = [], ttfB
         .catch(() => null)
 
       if (h2c) {
-        const canvas = await h2c.default(node, {
+        const html2canvas = h2c?.default ?? h2c
+        const canvas = await html2canvas(node, {
           scale:           SCALE,
           useCORS:         true,
           allowTaint:      false,
@@ -279,9 +284,6 @@ export default function Step5({ versionedGlyphs = [], extractedGlyphs = [], ttfB
     ...(signMode ? { fontStyle: 'italic' } : {}),
   }), [activeFontFamily, fontSize, zoom, lineHeight, letterSp, isDark, textAlign, signMode])
 
-  // Thai combining marks — สระ/วรรณยุกต์ที่ไม่มี glyph แยก (render ใน font cluster)
-  const isThaiCombining = (c) => /[\u0E31\u0E34-\u0E3A\u0E47-\u0E4E]/.test(c)
-
   // ── Missing chars (ตัวที่ไม่มีใน font) ──────────────────────────────────
   const missingChars = useMemo(() => {
     if (fontStatus !== 'ready') return []
@@ -289,7 +291,7 @@ export default function Step5({ versionedGlyphs = [], extractedGlyphs = [], ttfB
       [...text.replace(/[\n ]/g, '')]
         .filter(c => !isThaiCombining(c) && !glyphMapObj[c])
     )]
-  }, [text, glyphMapObj, fontStatus])
+  }, [text, glyphMapObj, fontStatus, isThaiCombining])
 
   // ── Font status bar label ─────────────────────────────────────────────────
   const fontStatusLabel = {
@@ -344,7 +346,7 @@ export default function Step5({ versionedGlyphs = [], extractedGlyphs = [], ttfB
           <TBtn key={a} active={textAlign === a} onClick={() => setAlign(a)}
             title={`Align ${a}`}
           >
-            {a === "left" ? "≡" : a === "center" ? "≣" : "≡"}
+            {a === "left" ? "≡" : a === "center" ? "≣" : "⌘"}
           </TBtn>
         ))}
         <Div />

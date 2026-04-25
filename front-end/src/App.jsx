@@ -82,6 +82,7 @@ export default function App() {
       parsedFile,
       glyphResult: null,          // reset downstream on new file
       versionedGlyphs: [],
+      ttfBuffer: null,            // reset font so Step5 doesn't show stale font
     })
   }
 
