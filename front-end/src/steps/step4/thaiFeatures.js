@@ -409,7 +409,7 @@ export function getFeatureStatus(glyphInfo) {
     salt: { enabled: hasAlts,  real: true,  desc: 'Stylistic Alternates — default→alt1' },
     calt: { enabled: hasAlts,  real: true,  desc: 'Contextual Alternates — rotate mod 3' },
     liga: { enabled: false,    real: false, desc: 'Ligatures — reserved for future pairs' },
-    mark: { enabled: hasMarks, real: true,  desc: 'Mark-to-Base — Thai vowel/tone anchor' },
+    mark: { enabled: hasMarks, real: false, desc: 'Mark-to-Base disabled in current opentype.js export path' },
     mkmk: { enabled: false,    real: false, desc: 'Mark-to-Mark — future stacked marks' },
   }
 }

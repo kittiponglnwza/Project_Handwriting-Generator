@@ -1,4 +1,4 @@
-export const PipelineStates = {
+﻿export const PipelineStates = {
   IDLE: 'idle',
   CALIBRATING: 'calibrating',
   EXTRACTING: 'extracting',
@@ -25,8 +25,6 @@ export class PipelineStateMachine {
       observer.onStateChange(newState, oldState, this.context)
     })
     
-    // Log transition
-    console.log(`Pipeline: ${oldState} → ${newState}`, this.context)
   }
   
   subscribe(observer) {

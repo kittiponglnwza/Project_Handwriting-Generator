@@ -1,10 +1,10 @@
-import { GRID_COLS } from "./constants.js"
+﻿import { GRID_COLS } from "./constants.js"
 
-// ─── Registration dot detection ──────────────────────────────────────────────
+// โ”€โ”€โ”€ Registration dot detection โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
 // Template CSS: .reg-tl/tr/bl/br { width:4px; height:4px; background:#3A7BD5; border-radius:50% }
 // At PDF scale=3: dot renders ~12px diameter
-// Color #3A7BD5 = RGB(58, 123, 213) → b dominant, mid luminance ~116
-// Guide lines are #A8C1DD = RGB(168, 193, 221) → lighter, lower b-r spread
+// Color #3A7BD5 = RGB(58, 123, 213) โ’ b dominant, mid luminance ~116
+// Guide lines are #A8C1DD = RGB(168, 193, 221) โ’ lighter, lower b-r spread
 
 export function detectRegDots(imageData, pageWidth, pageHeight) {
   const data = imageData
@@ -59,7 +59,7 @@ export function detectRegDots(imageData, pageWidth, pageHeight) {
 
       const w = maxX - minX + 1
       const h = maxY - minY + 1
-      // Allow slightly smaller dots (scale=3 → ~9-12px; after scan may compress)
+      // Allow slightly smaller dots (scale=3 โ’ ~9-12px; after scan may compress)
       if (w < 4 || h < 4 || w > 40 || h > 40) continue
       if (Math.max(w, h) / Math.min(w, h) > 2.5) continue
 
@@ -67,22 +67,21 @@ export function detectRegDots(imageData, pageWidth, pageHeight) {
     }
   }
 
-  console.log(`[detectRegDots] ${pageWidth}×${pageHeight}: ${dots.length} dots`)
   return dots
 }
 
-// detectCellGridLines — not used (template has explicit reg dots)
+// detectCellGridLines โ€” not used (template has explicit reg dots)
 export function detectCellGridLines() {
   return { vLines: [], hLines: [] }
 }
 
-export function buildCellRectsFromDots(dots, pageWidth, pageHeight, expectedCols, expectedCount) {
+export function buildCellRectsFromDots(dots, pageWidth, pageHeight) {
   if (dots.length < 4) return null
 
   function clusterCoords(vals, pageSize) {
     const sorted = [...vals].sort((a, b) => a - b)
     // CRITICAL FIX: 0.04 * pageWidth(~2480px) = 99px which swallows real column gaps (~17px).
-    // Use 0.015 → ~37px: big enough to merge jitter within a column, small enough to split columns.
+    // Use 0.015 โ’ ~37px: big enough to merge jitter within a column, small enough to split columns.
     const minGap = Math.max(8, pageSize * 0.015)
     const clusters = []
     let group = [sorted[0]]
@@ -101,7 +100,6 @@ export function buildCellRectsFromDots(dots, pageWidth, pageHeight, expectedCols
   const xs = clusterCoords(dots.map(d => d.x), pageWidth)
   const ys = clusterCoords(dots.map(d => d.y), pageHeight)
 
-  console.log(`[buildCellRectsFromDots] xs=${xs.length} ys=${ys.length} dots=${dots.length}`)
   if (xs.length < 2 || ys.length < 2) return null
 
   const minCellW = pageWidth * 0.05
@@ -123,7 +121,6 @@ export function buildCellRectsFromDots(dots, pageWidth, pageHeight, expectedCols
     }
   }
 
-  console.log(`[buildCellRectsFromDots] cellRects=${cellRects.length} (expected ~${expectedCount})`)
   return cellRects.length > 0 ? cellRects : null
 }
 
@@ -283,7 +280,7 @@ export function buildOrderedCellRectsForPage(page, pageCellFrom, pageMaxCells) {
   )
   if (!cellRectsRaw?.length) {
     console.warn(
-      `[buildOrderedCellRectsForPage] หน้า ${page.pageNumber}: dots=${page.regDots.length} แต่สร้าง cell rects ไม่ได้`
+      `[buildOrderedCellRectsForPage] เธซเธเนเธฒ ${page.pageNumber}: dots=${page.regDots.length} เนเธ•เนเธชเธฃเนเธฒเธ cell rects เนเธกเนเนเธ”เน`
     )
     return null
   }

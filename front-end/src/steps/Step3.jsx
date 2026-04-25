@@ -1,19 +1,19 @@
-/**
- * Step3 — Preview / Adjust / Validate
+﻿/**
+ * Step3 – Preview / Adjust / Validate
  *
  * ARCHITECTURE ROLE: Pure consumer + glyph extractor.
  *
  * Props:
- *   parsedFile  — from appState.parsedFile (set by Step 2)
+ *   parsedFile  – from appState.parsedFile (set by Step 2)
  *                 Shape: { file, characters, charSource, metadata, pages, status }
- *   onGlyphsUpdate(glyphs[]) — called whenever extracted glyphs change
+ *   onGlyphsUpdate(glyphs[]) – called whenever extracted glyphs change
  *
  * REMOVED:
- *   - selected (was Step 1 fallback — gone)
+ *   - selected (was Step 1 fallback – gone)
  *   - pdfFile  (PDF is NEVER re-read here)
- *   - templateChars (was Step 1 fallback — gone)
+ *   - templateChars (was Step 1 fallback – gone)
  *   - fallbackChars useMemo chain
- *   - getDocument() / loadingTask — all PDF I/O moved to Step 2
+ *   - getDocument() / loadingTask – all PDF I/O moved to Step 2
  *
  * Step 3 uses parsedFile.pages (pre-rendered canvases from Step 2)
  * to extract glyphs via glyphPipeline. No network/file I/O needed.
@@ -23,25 +23,17 @@ import Btn from "../components/Btn"
 import InfoBox from "../components/InfoBox"
 import C from "../styles/colors"
 import { buildAutoPageProfiles } from "../lib/step3/calibration.js"
-import { getGridGeometry, getPageCapacity, extractGlyphsFromCanvas, traceAllGlyphs } from "../lib/step3/glyphPipeline.js"
+import { getGridGeometry, traceAllGlyphs } from "../lib/step3/glyphPipeline.js"
 import {
-  GRID_COLS,
-  MIN_TRUSTED_INDEX_TARGETS,
-  TEMPLATE_CALIBRATION,
   ZERO_CALIBRATION,
 } from "../lib/step3/constants.js"
-import { buildOrderedCellRectsForPage } from "../lib/step3/regDots.js"
-import { mergeCalibration } from "../lib/step3/utils.js"
 import { Adjuster, GridDebugOverlay, PageDebugOverlay } from "./step3/Step3Panels.jsx"
 import DebugOverlay from "../components/DebugOverlay.jsx"
 
 // NEW: Engine imports
 import { PipelineStateMachine, PipelineStates } from "../engine/PipelineStateMachine.js"
-import { Step3Controller } from "../features/step3/Step3Controller.js"
 import { Telemetry } from "../engine/Telemetry.js"
 import { PerformanceGovernor } from "../engine/PerformanceGovernor.js"
-import { GlyphWorkerAdapter } from "../workers/GlyphWorkerAdapter.js"
-import { GeometryError, PipelineError } from "../engine/errors/BaseError.js"
 
 // NEW: Vision Engine imports
 import { VisionEngine } from "../core/vision/VisionEngine.js"
@@ -66,24 +58,20 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
   const [telemetryData, setTelemetryData] = useState({})
   const [pageVersion, setPageVersion] = useState(0)
   const [tracing, setTracing] = useState(false)
-  const engineMode = "vision" // locked to Vision Engine — git overlay only
   const [visionEngineResults, setVisionEngineResults] = useState(null)
   const [showQADashboard, setShowQADashboard] = useState(false)
   const [glyphOffsets, setGlyphOffsets] = useState({}) // { [glyphId]: {x, y} }
 
   const pageRef = useRef(null)
   const stateMachineRef = useRef(null)
-  const workerAdapterRef = useRef(null)
   const visionEngineRef = useRef(null)
 
-  // ── Initialize state machine and worker adapter (singleton — mount once) ───
+  // ── Initialize state machine (singleton – mount once) ───
   useEffect(() => {
     // Guard: ถ้า refs ถูก set แล้ว (HMR / StrictMode double-invoke) ไม่ต้อง re-create
     if (stateMachineRef.current) return
 
     const stateMachine  = new PipelineStateMachine()
-    const workerAdapter = new GlyphWorkerAdapter(2)
-    
     // Subscribe to state changes
     const unsubscribe = stateMachine.subscribe({
       onStateChange: (newState, oldState, context) => {
@@ -102,7 +90,6 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
     })
     
     stateMachineRef.current  = stateMachine
-    workerAdapterRef.current = workerAdapter
     
     // Initialize Vision Engine with error handling
     try {
@@ -115,16 +102,14 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
     return () => {
       unsubscribe()
       telemetryUnsubscribe()
-      workerAdapter.cleanup()
       visionEngineRef.current?.reset()
       // Reset refs on true unmount so they can be re-initialized if component remounts
       stateMachineRef.current  = null
-      workerAdapterRef.current = null
       visionEngineRef.current  = null
     }
   }, [])
 
-  // ── Load page data from parsedFile (no PDF I/O) ───────────────────────────
+  // ── Load page data from parsedFile (no PDF I/O) ────────────────────────────
   useEffect(() => {
     if (!parsedFile?.pages?.length) {
       pageRef.current = null
@@ -151,8 +136,8 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
       pageRef.current = { pages: profiledPages, totalPages: profiledPages.length }
       setAutoInfo(
         Number.isFinite(avgScore)
-          ? `Auto aligned ${profiledPages.length} pages (targets ${chars.length}, anchored ${anchorPages}, code ${codeAnchorPages}, avg score ${avgScore.toFixed(1)})`
-          : `Auto aligned ${profiledPages.length} pages (anchored ${anchorPages}, code ${codeAnchorPages})`
+          ? `Auto aligned ${profiledPages.length} หน้า (targets ${chars.length}, anchored ${anchorPages}, code ${codeAnchorPages}, avg score ${avgScore.toFixed(1)})`
+          : `Auto aligned ${profiledPages.length} หน้า (anchored ${anchorPages}, code ${codeAnchorPages})`
       )
       setPageVersion(v => v + 1)
       setError("")
@@ -199,35 +184,6 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
     }
   }, [chars, calibration])
 
-  // NEW: Legacy Engine event handlers (fallback)
-  const handleStartExtraction = useCallback(async () => {
-    if (!pageRef.current || !stateMachineRef.current) return
-    
-    try {
-      const pageData = {
-        pageWidth: pageRef.current.pages[0].pageWidth,
-        pageHeight: pageRef.current.pages[0].pageHeight,
-        chars: chars,
-        ctx: pageRef.current.pages[0].ctx,
-        pages: pageRef.current.pages
-      }
-      
-      const result = await Step3Controller.executeFullPipeline(pageData, calibration, stateMachineRef.current)
-      // Don't setTracedGlyphs here - let activeGlyphs handle it
-      
-      // Check memory usage
-      PerformanceGovernor.memoryMonitor.checkMemory()
-    } catch (error) {
-      if (error instanceof GeometryError) {
-        setError(`Geometry mismatch: ${error.message}`)
-      } else if (error instanceof PipelineError) {
-        setError(`Pipeline error: ${error.message}`)
-      } else {
-        setError(`Unexpected error: ${error.message}`)
-      }
-    }
-  }, [chars, calibration])
-
   // ── Re-run Vision Engine เมื่อ calibration (slider) เปลี่ยน ──────────────
   const prevCalibrationRef = useRef(null)
   const calibrationDebounceRef = useRef(null)
@@ -241,7 +197,7 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
       prev.cellAdjust !== calibration.cellAdjust ||
       prev.gapAdjust !== calibration.gapAdjust
     if (changed && visionEngineResults && !autoAligning && pageRef.current?.pages?.length > 0 && chars.length > 0) {
-      // debounce 600ms — รอให้ user หยุดลาก slider ก่อนค่อย re-extract
+      // debounce 600ms – รอให้ user หยุดลาก slider ก่อนค่อย re-extract
       clearTimeout(calibrationDebounceRef.current)
       calibrationDebounceRef.current = setTimeout(() => {
         setVisionEngineResults(null) // ล้างผลเดิม → auto-run effect จะ kick in
@@ -250,185 +206,21 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
     return () => clearTimeout(calibrationDebounceRef.current)
   }, [calibration]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Auto-run Vision Engine when pages are loaded ───────────────────────
+  // ── Auto-run Vision Engine when pages are loaded ───────────────────────────
   useEffect(() => {
     
-    if (engineMode === "vision" && pageRef.current?.pages?.length > 0 && chars.length > 0 && !visionEngineResults && !autoAligning) {
+    if (pageRef.current?.pages?.length > 0 && chars.length > 0 && !visionEngineResults && !autoAligning) {
       handleVisionEngineExtraction()
     }
-  }, [engineMode, pageRef.current?.pages?.length, chars.length, visionEngineResults, autoAligning, handleVisionEngineExtraction])
+  }, [pageRef.current?.pages?.length, chars.length, visionEngineResults, autoAligning, handleVisionEngineExtraction])
 
-  const handleAutoAlign = useCallback(async () => {
-    if (!pageRef.current) return
-    
-    setAutoAligning(true)
-    stateMachineRef.current?.transition(PipelineStates.CALIBRATING)
-    
-    try {
-      const profiledPages = buildAutoPageProfiles(pageRef.current.pages, chars)
-      pageRef.current = { ...pageRef.current, pages: profiledPages }
-      
-      const avgScore = profiledPages.length > 0
-        ? profiledPages.reduce((sum, p) => sum + (Number.isFinite(p.autoScore) ? p.autoScore : 0), 0) / profiledPages.length
-        : NaN
-      const anchorPages = profiledPages.filter(p => p.autoSource === "anchor").length
-      
-      setAutoInfo(
-        Number.isFinite(avgScore)
-          ? `Auto aligned ${profiledPages.length} pages (anchored ${anchorPages}, avg score ${avgScore.toFixed(1)})`
-          : `Auto aligned ${profiledPages.length} pages (anchored ${anchorPages})`
-      )
-      
-      stateMachineRef.current?.transition(PipelineStates.IDLE, {
-        pageCount: profiledPages.length,
-        avgScore
-      })
-    } catch (error) {
-      setError(error.message)
-      stateMachineRef.current?.transition(PipelineStates.ERROR, { error: error.message })
-    } finally {
-      setAutoAligning(false)
-    }
-  }, [chars])
-
-  // ── Auto-align (manual re-trigger) ───────────────────────────────────────
-  const runAutoAlign = () => {
-    const store = pageRef.current
-    if (!store?.pages?.length || chars.length === 0) return
-    setAutoAligning(true)
-    window.setTimeout(() => {
-      const pages = buildAutoPageProfiles(store.pages, chars)
-      pageRef.current = { ...store, pages }
-      const avgScore = pages.length > 0
-        ? pages.reduce((sum, p) => sum + (Number.isFinite(p.autoScore) ? p.autoScore : 0), 0) / pages.length
-        : NaN
-      const anchorPages = pages.filter(p => p.autoSource === "anchor").length
-      setAutoInfo(
-        Number.isFinite(avgScore)
-          ? `Auto aligned ${pages.length} pages (anchored ${anchorPages}, avg score ${avgScore.toFixed(1)})`
-          : `Auto aligned ${pages.length} pages (anchored ${anchorPages})`
-      )
-      setPageVersion(v => v + 1)
-      setAutoAligning(false)
-    }, 0)
-  }
-
-  // ── Glyph extraction (runs on calibration / page changes) ────────────────
-  const analysisResult = useMemo(() => {
-    // DISABLE legacy pipeline when Vision Engine is active
-    if (engineMode === "vision") {
-      return { glyphs: [], pageCharsCount: 0, maxCells: 0, pagesUsed: 0, totalPages: 0 }
-    }
-    
-    void pageVersion  // reactive on version bump
-    const source = pageRef.current
-    if (!source?.pages?.length || chars.length === 0) {
-      return { glyphs: [], pageCharsCount: 0, maxCells: 0, pagesUsed: 0, totalPages: source?.pages?.length ?? 0 }
-    }
-
-    let cursor = 0, pagesUsed = 0, maxCells = 0
-    const allGlyphs = []
-
-    for (const page of source.pages) {
-      if (cursor >= chars.length) break
-
-      const baseCalibration = page.autoCalibration ?? TEMPLATE_CALIBRATION
-      const pageCalibration = mergeCalibration(baseCalibration, calibration)
-
-      // ใช้ cursor เป็น startIndex เสมอ — cellFrom จาก QR ใช้แค่ตรวจสอบว่าตรงกันไหม
-      const startIndex = cursor
-      const remainingChars = chars.length - startIndex
-
-      let pageMaxCells
-      // DEBUG: log pageMeta per page
-      if (page.pageMeta?.cellCount > 0) {
-        pageMaxCells = Math.min(page.pageMeta.cellCount, remainingChars)
-      } else {
-        const geometry = getGridGeometry(
-          page.pageWidth, page.pageHeight,
-          Math.min(remainingChars, GRID_COLS * 6), pageCalibration
-        )
-        pageMaxCells = getPageCapacity(page.pageHeight, geometry.startY, geometry.cellHeight, geometry.gap)
-        if (page.contiguousCount >= MIN_TRUSTED_INDEX_TARGETS)
-          pageMaxCells = Math.min(pageMaxCells, page.contiguousCount)
-        pageMaxCells = Math.min(pageMaxCells, remainingChars)
-      }
-      pageMaxCells = Math.min(pageMaxCells, GRID_COLS * 6)
-      if (pageMaxCells <= 0) continue
-
-      const pageCellFrom = startIndex + 1
-      const hasGridLines = (page.regDots?.length ?? 0) >= 4
-      let pageCellRects = hasGridLines
-        ? buildOrderedCellRectsForPage(page, pageCellFrom, pageMaxCells)
-        : null
-      if (pageCellRects) {
-        pageCellRects = pageCellRects.map(r => ({
-          ...r, x: r.x + calibration.offsetX, y: r.y + calibration.offsetY,
-        }))
-      }
-
-      const pageChars = chars.slice(startIndex, startIndex + pageMaxCells)
-      if (pageChars.length === 0) continue
-
-      const rawPageGlyphs = extractGlyphsFromCanvas({
-        ctx:        page.ctx,
-        pageWidth:  page.pageWidth,
-        pageHeight: page.pageHeight,
-        chars:      pageChars,
-        calibration: pageCalibration,
-        cellRects:  pageCellRects,
-      })
-
-      const pageGlyphs = rawPageGlyphs.map((g, i) => ({
-        ...g,
-        id:         `p${page.pageNumber}-${startIndex + i}-${g.ch}`,
-        index:      startIndex + i + 1,
-        pageNumber: page.pageNumber,
-      }))
-
-      for (const glyph of pageGlyphs) {
-        allGlyphs.push(glyph)
-      }
-      cursor = startIndex + pageChars.length
-      pagesUsed += 1
-      maxCells  += pageMaxCells
-    }
-
-    allGlyphs.sort((a, b) => a.index - b.index)
-    const glyphs = removedIds.size === 0 ? allGlyphs : allGlyphs.filter(g => !removedIds.has(g.id))
-    return { glyphs, pageCharsCount: allGlyphs.length, maxCells, pagesUsed, totalPages: source.pages.length }
-  }, [chars, pageVersion, calibration, removedIds, engineMode])
-
-  // ── Feed analysisResult into tracedGlyphs automatically ─────────────────
-  useEffect(() => {
-    // DISABLE legacy processing when Vision Engine is active
-    if (engineMode === "vision") return
-    
-    if (analysisResult.glyphs.length === 0) {
-      setTracedGlyphs([])
-      return
-    }
-    let canceled = false
-    setTracing(true)
-    traceAllGlyphs(analysisResult.glyphs).then(traced => {
-      if (canceled) return
-      setTracedGlyphs(traced)
-      onGlyphsUpdate(traced)
-      setTracing(false)
-    })
-    return () => { canceled = true }
-  }, [analysisResult.glyphs, engineMode, onGlyphsUpdate])
-
-  // ── Single source of truth: activeGlyphs ──────────────────────────────
-  // Vision mode: ใช้ tracedGlyphs (normalized status + svgPath) ถ้า trace เสร็จแล้ว
-  // ถ้ายังรอ trace อยู่ ใช้ visionEngineResults.glyphs เพื่อ render preview ไปก่อน
+  // Single source of truth for preview/export flow:
+  // traced glyphs (with svgPath) have priority, otherwise show raw vision results.
   const activeGlyphs = useMemo(() => {
-    if (engineMode === "vision") {
-      if (tracedGlyphs.length > 0) return tracedGlyphs          // trace done ✓
-      if (visionEngineResults) return visionEngineResults.glyphs // tracing in progress
-    }
-    return tracedGlyphs
-  }, [engineMode, visionEngineResults, tracedGlyphs])
+    if (tracedGlyphs.length > 0) return tracedGlyphs
+    if (visionEngineResults) return visionEngineResults.glyphs
+    return []
+  }, [visionEngineResults, tracedGlyphs])
 
   const displayGlyphs = useMemo(() => {
     return removedIds.size === 0 ? activeGlyphs : activeGlyphs.filter(g => !removedIds.has(g.id))
@@ -438,11 +230,26 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
     return chars.length > activeGlyphs.length
   }, [chars.length, activeGlyphs.length])
 
-  // ── Sync Vision Engine results to parent — trace SVG paths first ──────
-  useEffect(() => {
-    if (engineMode !== "vision" || !visionEngineResults) return
+  const partialReadInfo = useMemo(() => {
+    const totalPages = pageRef.current?.pages?.length ?? 0
+    const pagesUsed = new Set(
+      activeGlyphs
+        .map(g => g.pageNumber)
+        .filter(n => Number.isFinite(n))
+    ).size
+    return {
+      pageCharsCount: activeGlyphs.length,
+      pagesUsed,
+      totalPages,
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeGlyphs, pageVersion])
 
-    // glyphs จาก VisionEngine ยังไม่มี svgPath — ต้อง trace ก่อนส่งไป Step4
+  // ── Sync Vision Engine results to parent – trace SVG paths first ──────
+  useEffect(() => {
+    if (!visionEngineResults) return
+
+    // glyphs จาก VisionEngine ยังไม่มี svgPath – ต้อง trace ก่อนส่งให้ Step4
     // ไม่งั้น buildGlyphMap ใน Step4 จะ filter ออกหมด (svgPath === null)
     let canceled = false
     setTracing(true)
@@ -482,19 +289,7 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
     })
 
     return () => { canceled = true }
-  }, [engineMode, visionEngineResults, onGlyphsUpdate])
-
-  // ── Reg-dot failure pages ─────────────────────────────────────────────────
-  const regDotsFailedPages = useMemo(() => {
-    const store = pageRef.current
-    if (!store?.pages) return []
-    return store.pages
-      .map(p => ({ pageNumber: p.pageNumber, dotsCount: p.regDots?.length ?? 0 }))
-      .filter(p => p.dotsCount < 4)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pageVersion])
-
-
+  }, [visionEngineResults, onGlyphsUpdate])
 
   const summary = useMemo(() => {
     // Use Vision Engine QA report if available, fallback to legacy counting
@@ -526,15 +321,8 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
     [displayGlyphs, activeId]
   )
 
-  const removeGlyph = glyph => {
-    setRemovedIds(prev => { const n = new Set(prev); n.add(glyph.id); return n })
-    if (activeId === glyph.id) setActiveId(null)
-    if (zoomGlyph?.id === glyph.id) setZoomGlyph(null)
-  }
-
-
-  // ── Per-glyph re-crop with individual offset ──────────────────────────────
-  // ข้าม Vision Engine preview (มักเป็น null/white) — crop ตรงจาก page canvas แทน
+  // ── Per-glyph re-crop with individual offset ────────────────────────────────
+  // ผ่าน Vision Engine preview (มักเป็น null/white) – crop ตรงจาก page canvas แทน
   const getAdjustedPreview = (glyph, offsetX = 0, offsetY = 0) => {
     const src = glyph._sourceRect
     const ctx = glyph._pageCtx
@@ -549,25 +337,25 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
         const sy = Math.max(0, Math.min(src.y + offsetY, ctx.canvas.height - 1))
         gc.drawImage(ctx.canvas, sx, sy, src.w, src.h, 0, 0, src.w, src.h)
         return canvas.toDataURL('image/png')
-      } catch (e) { /* fall through */ }
+      } catch { /* fall through */ }
     }
-    // fallback: ถ้าไม่มี _pageCtx ใช้ preview เดิม หรือ null
+    // fallback: ถ้าไม่มี _pageCtx ให้ preview เดิม หรือ null
     return glyph.preview ?? null
   }
 
   const stStyle = {
-    ok:       { border: C.sageMd,  bg: C.bgCard,  textColor: C.sage,  label: "OK" },
-    missing:  { border: C.blushMd, bg: C.blushLt, textColor: C.blush, label: "Missing" },
-    overflow: { border: C.amberMd, bg: C.amberLt, textColor: C.amber, label: "Overflow" },
-    excellent: { border: C.sageMd,  bg: C.sageLt, textColor: C.sage, label: "ดีเยี่ยม" },
-    good:     { border: C.sageMd, bg: C.sageLt, textColor: C.sage, label: "ดี" },
-    acceptable: { border: C.amberMd, bg: C.amberLt, textColor: C.amber, label: "พอใช้" },
-    poor:     { border: C.amberMd, bg: C.amberLt, textColor: C.amber, label: "แย่" },
+    ok:        { border: C.sageMd,  bg: C.bgCard,  textColor: C.sage,  label: "OK" },
+    missing:   { border: C.blushMd, bg: C.blushLt, textColor: C.blush, label: "Missing" },
+    overflow:  { border: C.amberMd, bg: C.amberLt, textColor: C.amber, label: "Overflow" },
+    excellent: { border: C.sageMd,  bg: C.sageLt,  textColor: C.sage,  label: "ดีเยี่ยม" },
+    good:      { border: C.sageMd,  bg: C.sageLt,  textColor: C.sage,  label: "ดี" },
+    acceptable:{ border: C.amberMd, bg: C.amberLt, textColor: C.amber, label: "พอใช้" },
+    poor:      { border: C.amberMd, bg: C.amberLt, textColor: C.amber, label: "แย่" },
     critical:  { border: C.blushMd, bg: C.blushLt, textColor: C.blush, label: "วิกฤต" },
-    error:    { border: C.blushMd, bg: C.blushLt, textColor: C.blush, label: "ผิดพลาด" },
+    error:     { border: C.blushMd, bg: C.blushLt, textColor: C.blush, label: "ผิดพลาด" },
   }
 
-  // ── Guards ────────────────────────────────────────────────────────
+  // ── Guards ──────────────────────────────────────────────────────────────────
   
   if (!parsedFile) {
     return (
@@ -577,18 +365,17 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
     )
   }
   
-
   if (chars.length === 0) {
     return (
       <div className="fade-up">
         <InfoBox color="amber">
-          ไม่พบตัวอักษรจากไฟล์นี้ กลับ Step 2 เพื่อระบุตัวอักษรด้วยตนเอง
+          ไม่พบตัวอักษรในไฟล์นี้ กลับ Step 2 เพื่อระบุตัวอักษรด้วยตนเอง
         </InfoBox>
       </div>
     )
   }
 
-  // ── Main render ───────────────────────────────────────────────────────────
+  // ── Main render ─────────────────────────────────────────────────────────────
   return (
     <div className="fade-up">
       {/* NEW: Pipeline status display */}
@@ -611,26 +398,21 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
       </div>
 
       {/* Summary stats */}
-      <div style={{ display: "grid", gridTemplateColumns: engineMode === "vision" && visionEngineResults ? "repeat(auto-fit, minmax(80px, 1fr))" : "repeat(4,1fr)", gap: 10, marginBottom: 20 }}>
-        {(engineMode === "vision" && visionEngineResults ? [
-          { label: "ดีเยี่ยม", val: summary.excellent, color: C.sage },
-          { label: "ดี", val: summary.good, color: C.sage },
-          { label: "พอใช้", val: summary.acceptable, color: C.amber },
-          { label: "แย่", val: summary.poor, color: C.amber },
-          { label: "วิกฤต", val: summary.critical, color: C.blush },
-          { label: "Overflow", val: summary.overflow, color: C.amber },
-          { label: "หาย", val: summary.missing, color: C.blush },
-          { label: "ทั้งหมด", val: summary.total, color: C.ink },
-        ] : [
-          { label: "OK", val: summary.ok, color: C.sage },
-          { label: "Missing", val: summary.missing, color: C.blush },
-          { label: "Overflow", val: summary.overflow, color: C.amber },
-          { label: "ทั้งหมด", val: summary.total, color: C.ink },
-        ]).map(s => {
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(80px, 1fr))", gap: 10, marginBottom: 20 }}>
+        {[
+          { label: "ดีเยี่ยม",  val: summary.excellent, color: C.sage },
+          { label: "ดี",        val: summary.good,      color: C.sage },
+          { label: "พอใช้",    val: summary.acceptable, color: C.amber },
+          { label: "แย่",       val: summary.poor,      color: C.amber },
+          { label: "วิกฤต",    val: summary.critical,  color: C.blush },
+          { label: "Overflow",  val: summary.overflow,  color: C.amber },
+          { label: "หาย",       val: summary.missing,   color: C.blush },
+          { label: "ทั้งหมด",  val: summary.total,     color: C.ink },
+        ].map(s => {
           const style = stStyle[s.label] || stStyle.ok
           return (
             <div key={s.label} style={{ background: style.bg, border: `1px solid ${style.border}`, borderRadius: 12, padding: "12px 8px", textAlign: "center" }}>
-              <p style={{ fontSize: (engineMode === "vision" && visionEngineResults) ? 18 : 22, fontWeight: 300, color: style.textColor, fontFamily: "'DM Serif Display',serif" }}>{s.val}</p>
+              <p style={{ fontSize: 18, fontWeight: 300, color: style.textColor, fontFamily: "'DM Serif Display',serif" }}>{s.val}</p>
               <p style={{ fontSize: 10, color: C.inkLt, marginTop: 4, letterSpacing: "0.05em" }}>{s.label}</p>
             </div>
           )
@@ -650,12 +432,12 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
       )}
 
       <InfoBox color="amber">
-        ถ้ากริดกับตัวเขียนไม่ตรง ให้ปรับ Grid Alignment ด้านล่างก่อน จากนั้นคลิกภาพเพื่อดูแบบขยาย
+        ถ้าตัวเขียนไม่ตรงกรอบ ให้ปรับ Grid Alignment ด้านล่างก่อน จากนั้นคลิกภาพเพื่อดูแบบขยาย
       </InfoBox>
       {isPartialRead && (
         <InfoBox color="amber">
-          ตอนนี้ระบบอ่านได้ {analysisResult.pageCharsCount}/{chars.length} ตัว
-          จาก {analysisResult.pagesUsed}/{analysisResult.totalPages} หน้า
+          ตอนนี้ระบบอ่านได้ {partialReadInfo.pageCharsCount}/{chars.length} ตัว
+          จาก {partialReadInfo.pagesUsed}/{partialReadInfo.totalPages} หน้า
         </InfoBox>
       )}
       {error && <InfoBox color="amber">{error}</InfoBox>}
@@ -715,9 +497,9 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
         <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 12 }}>
           <div style={{ display: "flex", alignItems: "center", minHeight: 30 }}>
             {autoAligning
-              ? <span style={{ fontSize: 11, color: C.amber }}>⟳ กำลัง re-extract ด้วย calibration ใหม่...</span>
+              ? <span style={{ fontSize: 11, color: C.amber }}>⏳ กำลัง re-extract ด้วย calibration ใหม่...</span>
               : tracing
-              ? <span style={{ fontSize: 11, color: C.sage }}>✏ กำลัง trace SVG paths... (รอสักครู่ก่อนไป Step 4)</span>
+              ? <span style={{ fontSize: 11, color: C.sage }}>✦ กำลัง trace SVG paths... (รอสักครู่ก่อนไป Step 4)</span>
               : autoInfo && <span style={{ fontSize: 11, color: C.inkLt }}>{autoInfo}</span>
             }
           </div>
@@ -725,11 +507,11 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
             <Btn onClick={handleVisionEngineExtraction} variant="primary" size="sm" disabled={autoAligning || pipelineState === PipelineStates.EXTRACTING}>
               {autoAligning ? "กำลังประมวลผล..." : "ดึงด้วย Vision Engine"}
             </Btn>
-            <Btn onClick={() => setRemovedIds(new Set())}                   variant="ghost"   size="sm" disabled={removedIds.size === 0}>คืนค่าตัวที่ลบ</Btn>
-            <Btn onClick={() => setCalibration(ZERO_CALIBRATION)}        variant="ghost"   size="sm">รีเซ็ตกริด</Btn>
-            <Btn onClick={() => setShowDebug(v => !v)}                      variant="ghost"   size="sm">{showDebug ? "ซ่อน Overlay" : "ดู Grid Overlay"}</Btn>
-            <Btn onClick={() => setShowOverlay(v => !v)}                    variant="ghost"   size="sm">{showOverlay ? "ซ่อน Debug" : "Debug Overlay"}</Btn>
-            <Btn onClick={() => setShowQADashboard(v => !v)}          variant="ghost"   size="sm">{showQADashboard ? "ซ่อน QA" : "QA Dashboard"}</Btn>
+            <Btn onClick={() => setRemovedIds(new Set())}            variant="ghost" size="sm" disabled={removedIds.size === 0}>คืนค่าตัวที่ลบ</Btn>
+            <Btn onClick={() => setCalibration(ZERO_CALIBRATION)}   variant="ghost" size="sm">รีเซ็ตกริด</Btn>
+            <Btn onClick={() => setShowDebug(v => !v)}               variant="ghost" size="sm">{showDebug   ? "ปิด Overlay"    : "ดู Grid Overlay"}</Btn>
+            <Btn onClick={() => setShowOverlay(v => !v)}             variant="ghost" size="sm">{showOverlay ? "ปิด Debug"      : "Debug Overlay"}</Btn>
+            <Btn onClick={() => setShowQADashboard(v => !v)}         variant="ghost" size="sm">{showQADashboard ? "ปิด QA"    : "QA Dashboard"}</Btn>
           </div>
         </div>
       </div>
@@ -738,7 +520,7 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
       {showDebug && (
         <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 14, padding: 14, marginBottom: 14 }}>
           <p style={{ fontSize: 11, color: C.inkLt, marginBottom: 10 }}>
-            ภาพที่ crop จากแต่ละช่อง —{" "}
+            ภาพที่ crop จากแต่ละช่อง –{" "}
             <span style={{ color: "#00a046" }}>●</span> OK{" "}
             <span style={{ color: "#c83c3c" }}>●</span> Missing{" "}
             <span style={{ color: "#c88c00" }}>●</span> Overflow
@@ -758,11 +540,11 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
         </div>
       )}
 
-      {/* Glyph grid — คลิกการ์ดเพื่อปรับตำแหน่งเฉพาะตัว */}
+      {/* Glyph grid – คลิกการ์ดเพื่อเปิดตัวกรับตำแหน่งเฉพาะตัว */}
       {displayGlyphs.length > 0 && (
         <div style={{ marginBottom: 8 }}>
           <p style={{ fontSize: 11, color: C.inkLt, marginBottom: 8 }}>
-            คลิกที่การ์ดเพื่อเปิดตัวปรับตำแหน่งเฉพาะตัวอักษรนั้น
+            คลิกที่การ์ดเพื่อเปิดตัวกรับตำแหน่งเฉพาะตัวอักษรนั้น
           </p>
         </div>
       )}
@@ -798,10 +580,10 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
                   </span>
                 )}
               </p>
-              {/* hint เฉพาะเมื่อ active */}
+              {/* hint เมื่อ active */}
               {isActive && (
                 <div style={{ position: "absolute", bottom: -1, left: 0, right: 0, background: C.ink, color: "#fff", fontSize: 8, borderRadius: "0 0 10px 10px", padding: "2px 0" }}>
-                  ▼ ดูตัวปรับด้านล่าง
+                  ▼ ดูตัวกรับด้านล่าง
                 </div>
               )}
             </div>
@@ -809,7 +591,7 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
         })}
       </div>
 
-      {/* Active glyph detail — with per-glyph offset controls */}
+      {/* Active glyph detail – with per-glyph offset controls */}
       {activeGlyph && (() => {
         const off = glyphOffsets[activeGlyph.id] ?? { x: 0, y: 0 }
         const setOff = (axis, val) =>
@@ -824,7 +606,7 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
             {/* Header */}
             <div style={{ padding: "10px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <p style={{ fontSize: 11, fontWeight: 500, letterSpacing: "0.08em", textTransform: "uppercase", color: C.inkLt, margin: 0 }}>
-                ปรับตำแหน่งเฉพาะตัวอักษร: <b style={{ color: C.ink, textTransform: "none" }}>{activeGlyph.ch}</b>
+                ตัวกรับตำแหน่งเฉพาะตัวอักษร: <b style={{ color: C.ink, textTransform: "none" }}>{activeGlyph.ch}</b>
                 {" "}• HG{String(activeGlyph.index).padStart(3, "0")}
               </p>
               <div style={{ display: "flex", gap: 8 }}>
@@ -865,7 +647,7 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
               {/* Adjusters column */}
               <div style={{ flex: 1, padding: 16, display: "flex", flexDirection: "column", gap: 14 }}>
                 <p style={{ fontSize: 11, color: C.inkLt, margin: 0 }}>
-                  ปรับได้เฉพาะตัวนี้ ไม่กระทบกับตัวอื่น
+                  ปรับเฉพาะตัวนี้ ไม่กระทบตัวอื่น
                 </p>
                 <Adjuster
                   label="เลื่อนซ้าย / ขวา (X)"
@@ -917,7 +699,6 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
         )
       })()}
 
-
       {/* QA Dashboard (collapse by default) */}
       {showQADashboard && visionEngineResults && (
         <div style={{ marginBottom: 16 }}>
@@ -930,7 +711,7 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
         </div>
       )}
 
-      {/* Zoom modal — with inline per-glyph adjustment */}
+      {/* Zoom modal – with inline per-glyph adjustment */}
       {zoomGlyph && (() => {
         const off = glyphOffsets[zoomGlyph.id] ?? { x: 0, y: 0 }
         const setOff = (axis, val) => {

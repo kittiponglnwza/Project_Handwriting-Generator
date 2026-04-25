@@ -92,18 +92,6 @@ export function getGridGeometry(pageWidth, pageHeight, charsLength, calibration)
   const startX = GRID_GEOMETRY.startX + (calibration.offsetX || 0)
   const startY = GRID_GEOMETRY.startY + (calibration.offsetY || 0)
 
-  // DEBUG: Log geometry values
-  console.log('[GEOMETRY_DEBUG] Using GRID_GEOMETRY values:')
-  console.log('  cellWidthPx:', GRID_GEOMETRY.cellWidthPx)
-  console.log('  cellHeightPx:', GRID_GEOMETRY.cellHeightPx)
-  console.log('  gapPx:', GRID_GEOMETRY.gapPx)
-  console.log('  startX:', GRID_GEOMETRY.startX)
-  console.log('  startY:', GRID_GEOMETRY.startY)
-  console.log('  Calibration:', calibration)
-  console.log('  Final cellWidth:', cellWidth)
-  console.log('  Final cellHeight:', cellHeight)
-  console.log('  Final gap:', gap)
-
   return { gap, cellWidth, cellHeight, startX, startY }
 }
 
@@ -172,7 +160,6 @@ function traceToSVGPath(inkCanvas, width, height) {
     for (let y = byMin; y <= byMax; y += rowStep) {
       // Find ink runs in this row
       let inRun = false, runStart = 0
-      let inkTop = y, inkBottom = Math.min(y + rowStep - 1, byMax)
 
       // Expand vertically: find actual ink extent in this band
       let bandTop = byMax, bandBot = byMin
@@ -269,15 +256,6 @@ export function extractGlyphsFromCanvas({ ctx, pageWidth, pageHeight, chars, cal
     
     const cropW = Math.min(cellW, pageWidth - cellX)
     const cropH = Math.min(cellH, pageHeight - cellY)
-
-    // STEP 4 — DEBUG OVERLAY - Log crop rectangle
-    if (i < 3) {  // Log first 3 cells only
-      console.log(`[CROP_DEBUG] Cell ${i} (${ch}):`)
-      console.log(`  Expected Grid: x=${Math.round(startX + col * (cellWidth + gap))}, y=${Math.round(startY + row * (cellHeight + gap))}, w=${cellWidth}, h=${cellHeight}`)
-      console.log(`  Actual Crop: x=${cellX}, y=${cellY}, w=${cropW}, h=${cropH}`)
-      console.log(`  Inset: ${Math.round(Math.min(cellWidth, cellHeight) * GRID_GEOMETRY.insetRatio)}px (${(GRID_GEOMETRY.insetRatio * 100).toFixed(1)}%)`)
-      console.log(`  Gap: ${gap}px, Calibration: offsetX=${calibration.offsetX}, offsetY=${calibration.offsetY}`)
-    }
 
     const imageData = ctx.getImageData(cellX, cellY, cropW, cropH)
     const cropCanvas = document.createElement("canvas")

@@ -522,7 +522,7 @@ export default function Step4({ glyphs = [], onFontReady }) {
             <span style={{ fontSize: 12, color: '#5C5340', fontFamily: 'monospace', marginLeft: 8 }}>v2.0</span>
           </p>
           <p style={{ fontSize: 11, color: '#7A6E58', marginTop: 3 }}>
-            Real TTF + WOFF · GSUB salt/calt · GPOS Thai mark anchors · Smart per-glyph metrics
+            Real TTF + WOFF · GSUB salt/calt · Smart per-glyph metrics
           </p>
         </div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>

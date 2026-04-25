@@ -65,9 +65,17 @@ const MARGIN = 64
 const FONT_FAMILY  = 'MyHandwriting'
 const STYLE_TAG_ID = 'my-handwriting-font-face'
 
-// Thai combining marks — สระ/วรรณยุกต์ที่ไม่มี glyph แยก (render ใน font cluster)
-// อยู่ระดับ module เพื่อให้ reference stable — ใส่ใน useMemo deps ได้ถูกต้อง
-const isThaiCombining = (c) => /[\u0E31\u0E34-\u0E3A\u0E47-\u0E4E]/.test(c)
+const THAI_CHAR_RE = /[\u0E00-\u0E7F]/
+const isWhitespaceChar = (c) => /\s/.test(c)
+const containsThai = (input) => THAI_CHAR_RE.test(input || "")
+const collectUniqueRenderableChars = (input) => {
+  const chars = new Set()
+  for (const c of (input || "")) {
+    if (isWhitespaceChar(c)) continue
+    chars.add(c)
+  }
+  return Array.from(chars)
+}
 
 export default function Step5({ versionedGlyphs = [], extractedGlyphs = [], ttfBuffer = null }) {
 
@@ -186,63 +194,50 @@ export default function Step5({ versionedGlyphs = [], extractedGlyphs = [], ttfB
       const w     = node.offsetWidth
       const h     = node.offsetHeight
 
-      // ── ใช้ html2canvas (CDN) เพื่อให้ custom font ถูก capture จริง ──
-      // XMLSerializer + SVG foreignObject จะ block custom font บน Chrome
-      const h2c = await import('https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.esm.min.js')
-        .catch(() => null)
+      // Export with deterministic canvas draw and no runtime CDN dependency.
+      const canvas   = document.createElement("canvas")
+      canvas.width   = w * SCALE
+      canvas.height  = h * SCALE
+      const ctx      = canvas.getContext("2d")
 
-      if (h2c) {
-        const html2canvas = h2c?.default ?? h2c
-        const canvas = await html2canvas(node, {
-          scale:           SCALE,
-          useCORS:         true,
-          allowTaint:      false,
-          backgroundColor: null,
-          logging:         false,
-          width:           w,
-          height:          h,
-        })
-        canvas.toBlob(pngBlob => {
-          const a    = document.createElement("a")
-          a.href     = URL.createObjectURL(pngBlob)
-          a.download = `handwriting-${Date.now()}.png`
-          a.click()
-          setTimeout(() => URL.revokeObjectURL(a.href), 5000)
-        }, "image/png")
-      } else {
-        // Fallback: ใช้ Canvas drawImage จาก font-face ที่ inject ไว้
-        // วาด text โดยตรงบน canvas ด้วย font ที่ถูก load แล้ว
-        const canvas   = document.createElement("canvas")
-        canvas.width   = w * SCALE
-        canvas.height  = h * SCALE
-        const ctx      = canvas.getContext("2d")
+      if (!ctx) throw new Error("Cannot create 2D context")
 
-        // วาด background
-        ctx.fillStyle = paperRef.current.style.background || "#FFFFFF"
-        ctx.fillRect(0, 0, canvas.width, canvas.height)
+      const exportChars = collectUniqueRenderableChars(text)
+      const missingForExport = fontStatus === "ready"
+        ? exportChars.filter(c => !glyphMapObj[c])
+        : []
+      const useCustomForExport = fontStatus === "ready" && missingForExport.length === 0
+      const exportFontFamily = useCustomForExport
+        ? `'${FONT_FAMILY}', 'Noto Sans Thai', 'TH Sarabun New', sans-serif`
+        : `'Noto Sans Thai', 'TH Sarabun New', Tahoma, sans-serif`
 
-        // วาด text ด้วย font ที่ inject ไว้
-        ctx.scale(SCALE, SCALE)
-        ctx.font      = `${fontSize}px '${FONT_FAMILY}', 'Noto Sans Thai', sans-serif`
-        ctx.fillStyle = C.ink
-        ctx.textBaseline = "top"
+      // Background
+      ctx.fillStyle = paperRef.current.style.background || "#FFFFFF"
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-        const lines = text.split("\n")
-        const lhPx  = fontSize * lineHeight
-        const padX  = A4W * zoom * (MARGIN / A4W)  // ≈ MARGIN * zoom
-        const padY  = padX
-        lines.forEach((line, i) => {
-          ctx.fillText(line, padX, padY + i * lhPx)
-        })
+      // Text
+      ctx.scale(SCALE, SCALE)
+      ctx.font = `${signMode ? "italic " : ""}${fontSize}px ${exportFontFamily}`
+      ctx.fillStyle = C.ink
+      ctx.textBaseline = "top"
+      ctx.textAlign = textAlign
 
-        canvas.toBlob(pngBlob => {
-          const a    = document.createElement("a")
-          a.href     = URL.createObjectURL(pngBlob)
-          a.download = `handwriting-${Date.now()}.png`
-          a.click()
-          setTimeout(() => URL.revokeObjectURL(a.href), 5000)
-        }, "image/png")
-      }
+      const lines = text.split("\n")
+      const lhPx  = fontSize * lineHeight
+      const padX  = A4W * zoom * (MARGIN / A4W)  // ≈ MARGIN * zoom
+      const padY  = padX
+      const drawX = textAlign === "center" ? w / 2 : textAlign === "right" ? w - padX : padX
+      lines.forEach((line, i) => {
+        ctx.fillText(line, drawX, padY + i * lhPx)
+      })
+
+      canvas.toBlob(pngBlob => {
+        const a    = document.createElement("a")
+        a.href     = URL.createObjectURL(pngBlob)
+        a.download = `handwriting-${Date.now()}.png`
+        a.click()
+        setTimeout(() => URL.revokeObjectURL(a.href), 5000)
+      }, "image/png")
     } catch (err) {
       console.error("[exportPNG] failed:", err)
       // Last-resort fallback — เปิดแท็บใหม่
@@ -255,56 +250,68 @@ export default function Step5({ versionedGlyphs = [], extractedGlyphs = [], ttfB
     }
 
     setExp(null)
-  }, [text, fontSize, lineHeight, zoom])
+  }, [text, fontSize, lineHeight, zoom, fontStatus, glyphMapObj, signMode, textAlign])
 
-  // ── Font family string: ใช้ MyHandwriting ถ้า ready, fallback เป็น system ──
-  const activeFontFamily = fontStatus === 'ready'
+  const hasThaiText = useMemo(() => containsThai(text), [text])
+  const requiredChars = useMemo(() => collectUniqueRenderableChars(text), [text])
+
+  // ── Missing chars (ตัวที่ไม่มีใน font) ──────────────────────────────────
+  const missingChars = useMemo(() => {
+    if (fontStatus !== 'ready') return []
+    return requiredChars.filter(c => !glyphMapObj[c])
+  }, [requiredChars, glyphMapObj, fontStatus])
+
+  // Prevent mixed cluster rendering: use custom font only when coverage is complete.
+  const canUseCustomFont = fontStatus === 'ready' && missingChars.length === 0
+
+  // ── Font family string: ใช้ MyHandwriting เฉพาะตอน coverage ครบ ──
+  const activeFontFamily = canUseCustomFont
     ? `'${FONT_FAMILY}', 'Noto Sans Thai', 'TH Sarabun New', sans-serif`
     : `'Noto Sans Thai', 'TH Sarabun New', Tahoma, sans-serif`
 
+  const coverageLabel = useMemo(() => {
+    if (!requiredChars.length) return "—"
+    const have = requiredChars.filter(c => glyphMapObj[c]).length
+    return `${Math.round(have / requiredChars.length * 100)}%`
+  }, [requiredChars, glyphMapObj])
+
   // ── Text style สำหรับ <div> หลัก — browser shaping เอง ──────────────────
-  // ไม่ต้องทำ renderLine ทีละ char อีกต่อไป
-  // browser + HarfBuzz จัดการ Thai cluster combining ครบ
+  // browser + HarfBuzz เป็น strategy เดียวสำหรับ Thai shaping
+  // หลีกเลี่ยง letterSpacing/word-break ที่ทำให้ cluster แตก
   const textStyle = useMemo(() => ({
     fontFamily:          activeFontFamily,
     fontSize:            `${fontSize * zoom}px`,
     lineHeight:          lineHeight,
-    letterSpacing:       `${letterSp}em`,
+    letterSpacing:       hasThaiText ? 'normal' : `${letterSp}em`,
     color:               isDark ? 'rgba(255,255,255,.88)' : C.ink,
     textAlign:           textAlign,
     whiteSpace:          'pre-wrap',
-    wordBreak:           'break-word',
-    overflowWrap:        'anywhere',
+    wordBreak:           'normal',
+    overflowWrap:        'normal',
+    lineBreak:           hasThaiText ? 'auto' : 'normal',
     fontKerning:         'normal',
-    fontFeatureSettings: '"salt" 1, "calt" 1, "liga" 1',
+    fontFeatureSettings: canUseCustomFont ? '"salt" 1, "calt" 1' : 'normal',
     textRendering:       'optimizeLegibility',
     WebkitFontSmoothing: 'antialiased',
     MozOsxFontSmoothing: 'grayscale',
     // italic/bold mock ยังทำได้ผ่าน transform/shadow
     ...(signMode ? { fontStyle: 'italic' } : {}),
-  }), [activeFontFamily, fontSize, zoom, lineHeight, letterSp, isDark, textAlign, signMode])
-
-  // ── Missing chars (ตัวที่ไม่มีใน font) ──────────────────────────────────
-  const missingChars = useMemo(() => {
-    if (fontStatus !== 'ready') return []
-    return [...new Set(
-      [...text.replace(/[\n ]/g, '')]
-        .filter(c => !isThaiCombining(c) && !glyphMapObj[c])
-    )]
-  }, [text, glyphMapObj, fontStatus, isThaiCombining])
+  }), [activeFontFamily, fontSize, zoom, lineHeight, letterSp, isDark, textAlign, signMode, hasThaiText, canUseCustomFont])
 
   // ── Font status bar label ─────────────────────────────────────────────────
-  const fontStatusLabel = {
+  const fontStatusLabel = ({
     idle:    '⏳ รอ compile font จาก Step 4',
     loading: '⏳ กำลังโหลด font…',
-    ready:   `✓ MyHandwriting (${glyphMap.size} glyphs)`,
+    ready:   canUseCustomFont
+      ? `✓ MyHandwriting (${glyphMap.size} glyphs)`
+      : `⚠ ใช้ fallback font ชั่วคราว (missing ${missingChars.length} glyphs)`,
     error:   '⚠ โหลด font ไม่สำเร็จ — ใช้ system font แทน',
-  }[fontStatus]
+  })[fontStatus]
 
   const fontStatusColor = {
     idle:    C.inkLt,
     loading: C.amber,
-    ready:   C.green,
+    ready:   canUseCustomFont ? C.green : C.amber,
     error:   C.red,
   }[fontStatus]
 
@@ -342,7 +349,7 @@ export default function Step5({ versionedGlyphs = [], extractedGlyphs = [], ttfB
           { a: "left",   icon: "⬛" },
           { a: "center", icon: "⬛" },
           { a: "right",  icon: "⬛" },
-        ].map(({ a, icon }, i) => (
+        ].map(({ a }) => (
           <TBtn key={a} active={textAlign === a} onClick={() => setAlign(a)}
             title={`Align ${a}`}
           >
@@ -560,16 +567,7 @@ export default function Step5({ versionedGlyphs = [], extractedGlyphs = [], ttfB
                 }}>
                   <MiniStat label="Glyphs"   value={extractedGlyphs.length}             color={C.blue}   />
                   <MiniStat label="Unique"   value={glyphMap.size}        color={C.green}  />
-                  <MiniStat label="Coverage" value={
-                    (() => {
-                      const chars = [...new Set(
-                        [...text.replace(/[\n ]/g,"")].filter(c => !isThaiCombining(c))
-                      )]
-                      if (!chars.length) return "—"
-                      const have = chars.filter(c => glyphMapObj[c]).length
-                      return Math.round(have / chars.length * 100) + "%"
-                    })()
-                  } color={C.purple} />
+                  <MiniStat label="Coverage" value={coverageLabel} color={C.purple} />
                 </div>
 
                 <SLbl>Style Presets</SLbl>
@@ -616,6 +614,9 @@ export default function Step5({ versionedGlyphs = [], extractedGlyphs = [], ttfB
                   }}>
                     <p style={{ fontSize: 11, color: C.amber, fontWeight: 700, marginBottom: 4 }}>
                       ⚠ ขาด Glyph {missingChars.length} ตัว
+                    </p>
+                    <p style={{ fontSize: 10, color: "#9A6B0A", marginBottom: 6 }}>
+                      แสดงผลด้วย fallback font ทั้งข้อความชั่วคราวเพื่อป้องกัน Thai cluster เพี้ยนจากการผสมฟอนต์
                     </p>
                     <p style={{ fontSize: 11, color: "#9A6B0A", letterSpacing: "0.08em" }}>
                       {missingChars.join("  ")}
