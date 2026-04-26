@@ -114,7 +114,7 @@ function traceToSVGPath(inkCanvas, width, height) {
     const imageData = ctx2.getImageData(0, 0, width, height)
     const { data } = imageData
 
-    // Build ink mask
+    // ── Build ink mask ────────────────────────────────────────────────────────
     const mask = new Uint8Array(width * height)
     for (let i = 0; i < width * height; i++) {
       const idx = i * 4
@@ -123,14 +123,31 @@ function traceToSVGPath(inkCanvas, width, height) {
       if (lum < 180) mask[i] = 1
     }
 
-    const inkCount = mask.reduce((s, v) => s + v, 0)
-    if (inkCount < 10) return null
+    let inkCount = 0
+    for (let i = 0; i < mask.length; i++) if (mask[i]) inkCount++
+    if (inkCount < 5) return null
 
-    // Tight bounding box
-    let bxMin = width, bxMax = 0, byMin = height, byMax = 0
+    // ── Dilate 1px: ป้องกัน stroke บางๆ แตก ─────────────────────────────────
+    const dilated = new Uint8Array(width * height)
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         if (mask[y * width + x]) {
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              const ny2 = y + dy, nx2 = x + dx
+              if (ny2 >= 0 && ny2 < height && nx2 >= 0 && nx2 < width)
+                dilated[ny2 * width + nx2] = 1
+            }
+          }
+        }
+      }
+    }
+
+    // ── Tight bounding box ────────────────────────────────────────────────────
+    let bxMin = width, bxMax = 0, byMin = height, byMax = 0
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        if (dilated[y * width + x]) {
           if (x < bxMin) bxMin = x
           if (x > bxMax) bxMax = x
           if (y < byMin) byMin = y
@@ -138,77 +155,127 @@ function traceToSVGPath(inkCanvas, width, height) {
         }
       }
     }
+    if (bxMin > bxMax || byMin > byMax) return null
+
     const bw = Math.max(bxMax - bxMin, 1)
     const bh = Math.max(byMax - byMin, 1)
-
     const PAD = 5
-    const nx = x => PAD + ((x - bxMin) / bw) * (100 - PAD * 2)
-    const ny = y => PAD + ((y - byMin) / bh) * (100 - PAD * 2)
+    const toSvgX = x => PAD + ((x - bxMin) / bw) * (100 - PAD * 2)
+    const toSvgY = y => PAD + ((y - byMin) / bh) * (100 - PAD * 2)
 
-    // Downsample factor for performance
-    const factor = Math.max(1, Math.floor(Math.min(width, height) / 64))
-
-    // For each column, find min/max ink y — build vertical profile
-    // Then emit one tall filled rect per contiguous ink column group
-    const pathCmds = []
-
-    // Scan column by column in downsampled space
-    const colStep = factor
-    const rowStep = factor
-
-    // Collect ink spans per row (downsampled)
-    for (let y = byMin; y <= byMax; y += rowStep) {
-      // Find ink runs in this row
-      let inRun = false, runStart = 0
-
-      // Expand vertically: find actual ink extent in this band
-      let bandTop = byMax, bandBot = byMin
-      for (let dy = y; dy < Math.min(y + rowStep, byMax + 1); dy++) {
-        for (let x = bxMin; x <= bxMax; x++) {
-          if (mask[dy * width + x]) {
-            if (dy < bandTop) bandTop = dy
-            if (dy > bandBot) bandBot = dy
-          }
-        }
+    // ── Row-span connected blob extraction ────────────────────────────────────
+    const rowSpans = []
+    for (let y = byMin; y <= byMax; y++) {
+      const spans = []
+      let inRun = false, x0 = 0
+      for (let x = bxMin; x <= bxMax + 1; x++) {
+        const ink = x <= bxMax && dilated[y * width + x] === 1
+        if (ink && !inRun) { inRun = true; x0 = x }
+        else if (!ink && inRun) { inRun = false; spans.push({ x0, x1: x - 1 }) }
       }
-      if (bandTop > bandBot) continue
+      rowSpans.push(spans)
+    }
 
-      for (let x = bxMin; x <= bxMax + colStep; x += colStep) {
-        // Check if any ink in this column band
-        let hasInk = false
-        for (let dx = x; dx < Math.min(x + colStep, bxMax + 1); dx++) {
-          for (let dy = y; dy < Math.min(y + rowStep, byMax + 1); dy++) {
-            if (dx < width && dy < height && mask[dy * width + dx]) {
-              hasInk = true
-              break
+    // BFS blob grouping on row-spans
+    const spanId = rowSpans.map(spans => new Int32Array(spans.length).fill(-1))
+    let blobId = 0
+    const blobRows = []
+
+    for (let ri = 0; ri < rowSpans.length; ri++) {
+      for (let si = 0; si < rowSpans[ri].length; si++) {
+        if (spanId[ri][si] >= 0) continue
+        const id = blobId++
+        blobRows.push([])
+        const queue = [[ri, si]]
+        spanId[ri][si] = id
+        while (queue.length) {
+          const [r, s] = queue.shift()
+          const { x0, x1 } = rowSpans[r][s]
+          blobRows[id].push({ y: byMin + r, x0, x1 })
+          for (const nr of [r - 1, r + 1]) {
+            if (nr < 0 || nr >= rowSpans.length) continue
+            for (let ns = 0; ns < rowSpans[nr].length; ns++) {
+              if (spanId[nr][ns] >= 0) continue
+              const { x0: ax0, x1: ax1 } = rowSpans[nr][ns]
+              if (ax1 >= x0 - 1 && ax0 <= x1 + 1) {
+                spanId[nr][ns] = id
+                queue.push([nr, ns])
+              }
             }
-          }
-          if (hasInk) break
-        }
-
-        if (hasInk && !inRun) {
-          inRun = true
-          runStart = x
-        } else if (!hasInk && inRun) {
-          inRun = false
-          // Emit filled rect for this run
-          const x1 = nx(runStart).toFixed(1)
-          const x2 = nx(Math.min(x, bxMax + 1)).toFixed(1)
-          const y1 = ny(bandTop).toFixed(1)
-          const y2 = ny(bandBot + 1).toFixed(1)
-          if (x1 !== x2 && y1 !== y2) {
-            pathCmds.push(`M ${x1} ${y1} L ${x2} ${y1} L ${x2} ${y2} L ${x1} ${y2} Z`)
           }
         }
       }
     }
 
-    if (pathCmds.length === 0) return null
+    const pathCmds = []
 
+    for (const rows of blobRows) {
+      if (rows.length === 0) continue
+      rows.sort((a, b) => a.y - b.y)
+
+      const xMin2 = Math.min(...rows.map(r => r.x0))
+      const xMax2 = Math.max(...rows.map(r => r.x1))
+      const len2 = xMax2 - xMin2 + 1
+      const topY = new Float32Array(len2).fill(Infinity)
+      const botY = new Float32Array(len2).fill(-Infinity)
+
+      for (const r of rows) {
+        for (let x = r.x0; x <= r.x1; x++) {
+          const xi = x - xMin2
+          if (r.y < topY[xi]) topY[xi] = r.y
+          if (r.y > botY[xi]) botY[xi] = r.y
+        }
+      }
+
+      const upper = [], lower = []
+      for (let xi = 0; xi < len2; xi++) {
+        if (topY[xi] === Infinity) continue
+        upper.push({ x: toSvgX(xMin2 + xi), y: toSvgY(topY[xi]) })
+        lower.push({ x: toSvgX(xMin2 + xi), y: toSvgY(botY[xi] + 1) })
+      }
+
+      if (upper.length === 0) continue
+      if (upper.length === 1) {
+        const px = upper[0].x.toFixed(1)
+        pathCmds.push(`M ${px} ${upper[0].y.toFixed(1)} L ${px} ${lower[0].y.toFixed(1)}`)
+        continue
+      }
+
+      const su = dpSimplify(upper.map(p => ({ x: parseFloat(p.x.toFixed(1)), y: parseFloat(p.y.toFixed(1)) })), 0.5)
+      const sl = dpSimplify(lower.map(p => ({ x: parseFloat(p.x.toFixed(1)), y: parseFloat(p.y.toFixed(1)) })), 0.5)
+
+      let d = `M ${su[0].x} ${su[0].y}`
+      for (let k = 1; k < su.length; k++) d += ` L ${su[k].x} ${su[k].y}`
+      d += ` L ${sl[sl.length - 1].x} ${sl[sl.length - 1].y}`
+      for (let k = sl.length - 2; k >= 0; k--) d += ` L ${sl[k].x} ${sl[k].y}`
+      d += ' Z'
+      pathCmds.push(d)
+    }
+
+    if (pathCmds.length === 0) return null
     return { path: pathCmds.join(" "), viewBox: "0 0 100 100" }
   } catch {
     return null
   }
+}
+
+/** Douglas-Peucker polyline simplification */
+function dpSimplify(pts, epsilon) {
+  if (pts.length <= 2) return pts
+  let maxDist = 0, maxIdx = 0
+  const first = pts[0], last = pts[pts.length - 1]
+  const dx = last.x - first.x, dy = last.y - first.y
+  const len = Math.sqrt(dx * dx + dy * dy) || 1
+  for (let i = 1; i < pts.length - 1; i++) {
+    const dist = Math.abs((pts[i].x - first.x) * dy - (pts[i].y - first.y) * dx) / len
+    if (dist > maxDist) { maxDist = dist; maxIdx = i }
+  }
+  if (maxDist > epsilon) {
+    const left  = dpSimplify(pts.slice(0, maxIdx + 1), epsilon)
+    const right = dpSimplify(pts.slice(maxIdx), epsilon)
+    return [...left.slice(0, -1), ...right]
+  }
+  return [first, last]
 }
 
 async function traceGlyphAsync(inkCanvas, width, height) {

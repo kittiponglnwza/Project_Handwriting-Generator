@@ -328,7 +328,10 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
     setTracing(true)
 
     const glyphsToTrace = visionEngineResults.glyphs.map(g => {
-      const canvas = g._normalizedCanvas || g._inkCanvas
+      // ใช้ _smartCroppedCanvas (crop ตาม ink bbox) ถ้ามี
+      // ถ้าไม่มีใช้ _inkCanvas raw ตรงๆ
+      // ห้ามใช้ _normalizedCanvas เพราะ rescale ลง 100×100 แล้ว pixel ขาด → เส้นแตก
+      const canvas = g._smartCroppedCanvas || g._inkCanvas
       return {
         ...g,
         _inkCanvas: canvas,
