@@ -156,15 +156,30 @@ function traceToSVGPath(inkCanvas, width, height, _ch = '') {
     // ink height bh → scale ให้สูงสุดไม่เกิน SVG_BASELINE (=80 units)
     // ทำให้ตัวสูงสุดแตะ svgY=0 พอดี (ไม่ overflow ออกนอก viewBox)
     const SVG_BASELINE = 80
-    const MAX_HEIGHT   = SVG_BASELINE  // ความสูงสูงสุดใน SVG space
+    const MAX_HEIGHT   = SVG_BASELINE
 
-    // scale: 1 ink pixel = ? SVG unit
-    // cap ที่ MAX_HEIGHT/bh ป้องกันตัวเล็ก scale ระเบิด
-    const scale = Math.min(MAX_HEIGHT / Math.max(bh, 1), MAX_HEIGHT / 20)
+    // ── Descender letters: j g p q y ────────────────────────────────────────
+    // ปัญหาเดิม: anchor byMax (ก้นสุดของ ink) → SVG y=80 เสมอ
+    // ผลลัพธ์: ขาของ j ถูกดึงขึ้นมาอยู่ที่ y=80 พอดี ไม่มี coordinate เกิน 80
+    // แก้: anchor ที่ baseline จริงของ cell (80% ของ height) แทน
+    // → ขาที่ยื่นลงจาก baseline จะมี y > 80 → fontBuilder แปลงเป็น negative fu ✓
+    const DESCENDER_CHARS = new Set(["j", "g", "p", "q", "y"])
+    const isDescender = DESCENDER_CHARS.has(_ch)
+
+    let anchorPx, scale
+    if (isDescender) {
+      const cellBaseline_px = height * (SVG_BASELINE / 100)  // 80% ของ cell height
+      anchorPx = cellBaseline_px
+      const bodyHeight_px = Math.max(cellBaseline_px - byMin, 1)
+      scale = Math.min(SVG_BASELINE / bodyHeight_px, SVG_BASELINE / 20)
+    } else {
+      anchorPx = byMax
+      scale = Math.min(MAX_HEIGHT / Math.max(bh, 1), MAX_HEIGHT / 20)
+    }
 
     const toSvgX = x => PAD_X + ((x - bxMin) / bw) * (100 - PAD_X * 2)
-    // anchor byMax → SVG_BASELINE, scale ขึ้นตามสัดส่วน
-    const toSvgY = y => SVG_BASELINE - (byMax - y) * scale
+    // y > anchorPx → svgY > 80 → descender tail ✓
+    const toSvgY = y => SVG_BASELINE - (anchorPx - y) * scale
 
     // ── Centerline / medial-axis tracing ─────────────────────────────────────
     // แทน silhouette outline ด้วย centerline จริงๆ: หา midpoint ของแต่ละ column
@@ -310,12 +325,17 @@ function traceToSVGPath(inkCanvas, width, height, _ch = '') {
     }
 
     if (pathCmds.length === 0) return null
+
+    const svgDescBot = isDescender
+      ? +(SVG_BASELINE - (anchorPx - byMax) * scale).toFixed(1)
+      : SVG_BASELINE
+
     return {
       path: pathCmds.join(" "),
       viewBox: "0 0 100 100",
-      svgBaseline: SVG_BASELINE,  // คงที่ทุกตัว = 80
-      svgDescBot:  SVG_BASELINE,  // fontBuilder ใช้ svgBaseline เดียว
-      svgCapTop:   0,
+      svgBaseline: SVG_BASELINE,
+      svgDescBot,
+      svgCapTop: 0,
     }
   } catch {
     return null

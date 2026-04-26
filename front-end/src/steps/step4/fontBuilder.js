@@ -180,9 +180,19 @@ export function svgPathToOTCommands(svgPath, cp = 0, glyphMeta = {}) {
 
   // Default converters for non-marks (identity X scale, baseline-shifted Y)
   let toFontX = (svgX) => svgX * SCALE
-  // Simple toFontY: proportional map ผ่าน baseline
-  //   svgY=80 → 0 (baseline), svgY=0 → CAP_HEIGHT, svgY>80 → negative
-  let toFontY = (svgY) => (svgBaseline - svgY) / svgBaseline * CAP_HEIGHT
+
+  // ── Latin height classification ──────────────────────────────────────────
+  // Ascender lowercase (b d f h i j k l t) → ASCENDER = 800 fu
+  // Regular lowercase (a c e g m n o p q r s u v w x y z) → X_HEIGHT = 500 fu
+  // Uppercase / Thai / other → CAP_HEIGHT = 680 fu
+  //
+  // Descender letters (j g p q y): svgY > 80 from glyphPipeline → negative fu ✓
+  const isLowercase = cp >= 0x0061 && cp <= 0x007A
+  const LATIN_ASCENDERS = new Set([0x62,0x64,0x66,0x68,0x69,0x6A,0x6B,0x6C,0x74]) // b d f h i j k l t
+  const targetHeight = !isLowercase ? CAP_HEIGHT : LATIN_ASCENDERS.has(cp) ? ASCENDER : X_HEIGHT
+
+  // svgY=svgBaseline → 0 fu  |  svgY=0 → targetHeight  |  svgY>svgBaseline → negative (descender)
+  let toFontY = (svgY) => (svgBaseline - svgY) / svgBaseline * targetHeight
 
   if (isMark) {
     // ── Pass 1: collect all SVG X and Y values for bbox ────────────────────
