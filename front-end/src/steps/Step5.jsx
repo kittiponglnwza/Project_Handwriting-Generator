@@ -111,17 +111,17 @@ function renderHandwrittenSVG({ text, glyphMap, fontSize, lineHeight, letterSp, 
         : null
 
       if (svgPath) {
-        // SVG_BASELINE = 80 (glyphPipeline.js วาง baseline ไว้ที่ svgY=80)
-        // translate ให้ svgY=80 ตรงกับ y (text baseline)
-        // scale = fontSize / 100 แต่ต้อง offset ให้ baseline ตรง:
-        //   baseline ใน SVG space = 80 units
-        //   หลัง scale: baseline อยู่ที่ 80 * scale = fontSize * 0.8
-        //   ดังนั้น translateY = y - fontSize * 0.8  (ไม่ใช่ 0.82)
+        // คำนวณ bottom จริงจาก path (robust ต่อ deformation ทุกแบบ)
+        const yVals = []
+        svgPath.replace(/[ML]\s*([-\d.]+)\s+([-\d.]+)/g, (_, _x, y) => yVals.push(+y))
+        svgPath.replace(/C(?:\s*[-\d.]+\s+[-\d.]+\s+[-\d.]+\s+[-\d.]+\s+([-\d.]+)\s+([-\d.]+))+/g,
+          (match) => { [...match.matchAll(/C|(?:([-\d.]+)\s+([-\d.]+))(?=\s|$)/g)].forEach(m => m[2] && yVals.push(+m[2])) })
+        const actualBottom = yVals.length > 0 ? Math.max(...yVals) : (picked.svgBaseline ?? 80)
+        const baselineRatio = Math.min(actualBottom, 95) / 100  // cap ที่ 95 ป้องกัน outlier
         const scale = fontSize / 100
-        const SVG_BASELINE_RATIO = 0.80   // svgY=80 / viewBox=100
-        const rot  = (xorshift(posCounter * 13337 + seed * 31337) - 0.5) * 3.5
+        const rot = (xorshift(posCounter * 13337 + seed * 31337) - 0.5) * 1.5
         svgLines.push(
-          `<g transform="translate(${x}, ${y - fontSize * SVG_BASELINE_RATIO}) rotate(${rot.toFixed(2)}, ${fontSize/2}, ${fontSize * SVG_BASELINE_RATIO}) scale(${scale})">
+          `<g transform="translate(${x}, ${y - fontSize * baselineRatio}) rotate(${rot.toFixed(2)}, ${fontSize/2}, ${fontSize * baselineRatio}) scale(${scale})">
             <path d="${svgPath}" fill="${inkCol}" />
           </g>`
         )

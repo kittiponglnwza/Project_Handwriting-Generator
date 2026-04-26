@@ -108,8 +108,29 @@ export function svgPathToOTCommands(svgPath, cp = 0, glyphMeta = {}) {
   //   svgY=80 (baseline) → 0 font units  ✓
   //   svgY=0  (top)      → CAP_HEIGHT (680) font units  ✓
   //   svgY>80 (descender)→ negative font units  ✓
-  const svgBaseline = glyphMeta.svgBaseline ?? 80
-  const BASELINE_SHIFT = 0  // unused but kept for Thai mark code below
+  // ── คำนวณ bottom จริงจาก path coordinates ─────────────────────────────────
+  // ไม่ trust meta.svgBaseline เพราะ deformPath อาจเลื่อน coordinates ไปแล้ว
+  // หา maxY จาก path จริงๆ แล้วใช้เป็น baseline (สำหรับ non-mark เท่านั้น)
+  function computeActualBottom(path) {
+    const yVals = []
+    const toks = path.trim().split(/(?=[MLCQZz])/)
+    for (const tok of toks) {
+      const cmd = tok.trim()[0]
+      if (!cmd || cmd === 'Z' || cmd === 'z') continue
+      const nums = tok.slice(1).trim().split(/[\s,]+/).map(Number).filter(n => !isNaN(n) && isFinite(n))
+      if (cmd === 'M' || cmd === 'L') {
+        for (let i = 1; i < nums.length; i += 2) yVals.push(nums[i])
+      } else if (cmd === 'C') {
+        for (let i = 5; i < nums.length; i += 6) yVals.push(nums[i])
+      } else if (cmd === 'Q') {
+        for (let i = 3; i < nums.length; i += 4) yVals.push(nums[i])
+      }
+    }
+    return yVals.length > 0 ? Math.max(...yVals) : (glyphMeta.svgBaseline ?? 80)
+  }
+
+  const svgBaseline = computeActualBottom(svgPath)
+  const BASELINE_SHIFT = 0
 
   // ── Thai mark zone placement — SCALE + TRANSLATE (zone-fit) ─────────────
   // opentype.js 1.3.x cannot write GPOS, so mark positions are baked into path
@@ -371,12 +392,9 @@ export function buildGlyphMap(glyphs, seed = Math.random()) {
       const j = Math.floor(_rand() * (i + 1))
       ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
     }
-    // deformPath version สุ่มด้วย เพื่อให้ alt1/alt2 ไม่ซ้ำ pattern เดิม
+    // deformPath: default เสมอใช้ version 1 (ต้นฉบับ), alt1=2 (droop), alt2=3 (wavy)
+    // ไม่ shuffle dv — ทำให้ default glyph เสมอดูสม่ำเสมอ ไม่คดเคี้ยว
     const dv = [1, 2, 3]
-    for (let i = dv.length - 1; i > 0; i--) {
-      const j = Math.floor(_rand() * (i + 1))
-      ;[dv[i], dv[j]] = [dv[j], dv[i]]
-    }
 
     // เก็บ baseline metadata จาก Step 3 (ใช้ค่าของ default glyph)
     const _g0 = shuffled[0]
@@ -389,7 +407,7 @@ export function buildGlyphMap(glyphs, seed = Math.random()) {
       rawId:     _g0.id,
       viewBox:   _g0.viewBox || '0 0 100 100',
       meta: {
-        svgBaseline: _g0.svgBaseline ?? 78,
+        svgBaseline: _g0.svgBaseline ?? 80,
         svgDescBot:  _g0.svgDescBot  ?? 78,
         svgCapTop:   _g0.svgCapTop   ?? 10,
       },

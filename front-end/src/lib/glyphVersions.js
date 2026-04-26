@@ -70,15 +70,15 @@ export function deformPath(svgPath, version) {
       if (isNaN(x) || isNaN(y)) return match
 
       if (version === 2) {
-        // droop มากขึ้น (หางตกชัดขึ้น)
+        // droop เบาๆ — ให้ดูเป็นธรรมชาติ ไม่ตกมากเกินไป
         const t = y / 100
-        const drop = t * 8 // เดิม ~5
+        const drop = t * 3.0
         y += drop
-        x -= t * 2.4 // เดิม ~1.5
+        x -= t * 0.8
       } else if (version === 3) {
-        // wavy มากขึ้น (แกว่ง/ดัดเข้มขึ้น)
-        const freq = 0.18 // เดิม 0.15
-        const amp = 2.4 // เดิม 1.5
+        // wavy เบาๆ — แกว่งเล็กน้อย ไม่คดเคี้ยวเกินไป
+        const freq = 0.14
+        const amp = 0.9
         x += Math.sin(y * freq) * amp
         y += Math.cos(x * freq) * amp
       }
