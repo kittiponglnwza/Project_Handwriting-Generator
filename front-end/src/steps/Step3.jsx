@@ -280,12 +280,13 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
   }, [calibration]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Auto-run Vision Engine when pages are loaded ───────────────────────────
+  // ใช้ pageVersion (increments ใน pageRef effect) แทน pageRef.current?.pages?.length
+  // เพราะ React ไม่ track mutation บน ref → ใช้ pageVersion เป็น stable trigger แทน
   useEffect(() => {
-    
-    if (pageRef.current?.pages?.length > 0 && chars.length > 0 && !visionEngineResults && !autoAligning) {
+    if (pageVersion > 0 && chars.length > 0 && !visionEngineResults && !autoAligning) {
       handleVisionEngineExtraction()
     }
-  }, [pageRef.current?.pages?.length, chars.length, visionEngineResults, autoAligning, handleVisionEngineExtraction])
+  }, [pageVersion, chars.length, visionEngineResults, autoAligning, handleVisionEngineExtraction])
 
   // Single source of truth for preview/export flow:
   // traced glyphs (with svgPath) have priority, otherwise show raw vision results.
@@ -398,8 +399,22 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
   )
 
   // ── Per-glyph re-crop with individual offset ────────────────────────────────
-  // ผ่าน Vision Engine preview (มักเป็น null/white) – crop ตรงจาก page canvas แทน
-  const getAdjustedPreview = (glyph, offsetX = 0, offsetY = 0) => {
+  // cache key: `${glyphId}:${offsetX}:${offsetY}` → data URL
+  // ใช้ useRef แทน useMemo เพราะ cache ต้องคงอยู่ข้าม render โดยไม่ขึ้นกับ deps
+  const previewCacheRef = useRef(new Map())
+
+  // ล้าง cache เมื่อ displayGlyphs เปลี่ยน (extraction ใหม่)
+  useEffect(() => {
+    previewCacheRef.current.clear()
+  }, [displayGlyphs])
+
+  const getAdjustedPreview = useCallback((glyph, offsetX = 0, offsetY = 0) => {
+    const cacheKey = `${glyph.id}:${offsetX}:${offsetY}`
+    if (previewCacheRef.current.has(cacheKey)) {
+      return previewCacheRef.current.get(cacheKey)
+    }
+
+    let result = null
     const src = glyph._sourceRect
     const ctx = glyph._pageCtx
     if (src && ctx && ctx.canvas) {
@@ -412,12 +427,29 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
         const sx = Math.max(0, Math.min(src.x + offsetX, ctx.canvas.width - 1))
         const sy = Math.max(0, Math.min(src.y + offsetY, ctx.canvas.height - 1))
         gc.drawImage(ctx.canvas, sx, sy, src.w, src.h, 0, 0, src.w, src.h)
-        return canvas.toDataURL('image/png')
+        result = canvas.toDataURL('image/png')
       } catch { /* fall through */ }
     }
-    // fallback: ถ้าไม่มี _pageCtx ให้ preview เดิม หรือ null
-    return glyph.preview ?? null
-  }
+    // fallback: ใช้ smartCropped preview ที่ VisionEngine generate ไว้แล้ว
+    // (ดีกว่า raw preview เพราะ crop ตาม ink bbox แล้ว)
+    if (!result) result = glyph._smartCroppedPreview ?? glyph.preview ?? null
+
+    // Cache ขนาดไม่เกิน 500 entries เพื่อป้องกัน memory leak
+    if (previewCacheRef.current.size >= 500) previewCacheRef.current.clear()
+    previewCacheRef.current.set(cacheKey, result)
+    return result
+  }, [])
+
+  // ── Pre-compute base previews สำหรับ grid (offset = 0,0) ──────────────────
+  // ทำให้ render ครั้งแรกไม่ต้อง re-draw canvas ทุก glyph card
+  const basePreviewMap = useMemo(() => {
+    const map = new Map()
+    for (const g of displayGlyphs) {
+      map.set(g.id, getAdjustedPreview(g, 0, 0))
+    }
+    return map
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayGlyphs])
 
   const stStyle = {
     ok:        { border: C.sageMd,  bg: C.bgCard,  textColor: C.sage,  label: "OK" },
@@ -637,6 +669,12 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
           const s = stStyle[glyphStatus] || stStyle.ok
           const isActive = activeId === g.id
           const hasOff = !!glyphOffsets[g.id]
+          // ใช้ basePreviewMap (offset=0) สำหรับ grid เพื่อไม่ต้อง draw canvas ทุก render
+          // เฉพาะตอนมี offset ค่อย getAdjustedPreview จริงๆ (cached แล้ว)
+          const off = glyphOffsets[g.id]
+          const gridSrc = off
+            ? getAdjustedPreview(g, off.x, off.y)
+            : (basePreviewMap.get(g.id) ?? null)
           return (
             <div key={g.id} className="glyph-card" onClick={() => setActiveId(isActive ? null : g.id)}
               style={{ position: "relative", background: isActive ? C.bgMuted : s.bg, border: `1.5px solid ${isActive ? C.ink : s.border}`, borderRadius: 12, padding: "8px 6px", textAlign: "center", cursor: "pointer", outline: isActive ? `2px solid ${C.ink}` : "none", outlineOffset: 1 }}>
@@ -645,10 +683,10 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
                 style={{ position: "absolute", top: 4, right: 4, width: 20, height: 20, borderRadius: 999, border: `1px solid ${C.border}`, background: "#fff", color: C.inkMd, fontSize: 10, cursor: "pointer", zIndex: 1 }}
                 title="Remove this glyph">✕</button>
               {/* ภาพ glyph */}
-              <button type="button" onClick={e => { e.stopPropagation(); const off = glyphOffsets[g.id] ?? {x:0,y:0}; setZoomGlyph({ ...g, preview: getAdjustedPreview(g, off.x, off.y) }) }}
+              <button type="button" onClick={e => { e.stopPropagation(); const o = glyphOffsets[g.id] ?? {x:0,y:0}; setZoomGlyph({ ...g, preview: getAdjustedPreview(g, o.x, o.y) }) }}
                 style={{ width: "100%", aspectRatio: "1", borderRadius: 8, background: C.bgCard, border: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", marginBottom: 6, padding: 4, cursor: "zoom-in" }}
                 title="Zoom in">
-                <img src={getAdjustedPreview(g, glyphOffsets[g.id]?.x ?? 0, glyphOffsets[g.id]?.y ?? 0)} alt={`Glyph ${g.ch}`} style={{ width: "100%", height: "100%", objectFit: "contain", imageRendering: "auto" }} />
+                <img src={gridSrc} alt={`Glyph ${g.ch}`} style={{ width: "100%", height: "100%", objectFit: "contain", imageRendering: "auto" }} />
               </button>
               <p style={{ fontSize: 12, fontWeight: 500, color: C.ink }}>{g.ch}</p>
               <p style={{ fontSize: 9, color: C.inkLt, marginTop: 1 }}>

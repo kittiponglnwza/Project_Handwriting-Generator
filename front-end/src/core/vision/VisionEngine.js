@@ -334,7 +334,7 @@ export class VisionEngine {
         const preview = (previewCanvas && typeof previewCanvas.toDataURL === 'function')
           ? previewCanvas.toDataURL('image/png')
           : null
-        return { ...glyph, preview }
+        return { ...glyph, preview, _smartCroppedPreview: preview }
       })
       results.push(...withPreviews)
     }

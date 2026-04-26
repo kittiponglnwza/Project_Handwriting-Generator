@@ -62,7 +62,9 @@ export function buildInkOnlyImageData(imageData, width, height) {
     const lum = r * 0.2126 + g * 0.7152 + b * 0.0722
 
     const blueDom = b - Math.max(r, g)
-    const isBlueFamily = blueDom > 5 && b > 100
+    // #A8C1DD = R168 G193 B221 → blueDom=28, b=221
+    // PDF rendering อาจ darken/shift สี → threshold ต่ำลง + เพิ่ม hue check
+    const isBlueFamily = (blueDom > 3 && b > 90) || (b > r + 10 && b > g + 5 && lum > 140)
     if (isBlueFamily) {
       clear(i)
       continue
@@ -111,43 +113,27 @@ function traceToSVGPath(inkCanvas, width, height) {
     const ctx2 = inkCanvas.getContext("2d")
     if (!ctx2) return null
 
-    const imageData = ctx2.getImageData(0, 0, width, height)
-    const { data } = imageData
+    const rawImageData = ctx2.getImageData(0, 0, width, height)
+    // ใช้ buildInkOnlyImageData เพื่อกรอง blue guideline (#A8C1DD) และ background ออก
+    // ก่อนสร้าง mask — เหมือนกับที่ extractGlyphsFromCanvas ทำ
+    const inkImageData = buildInkOnlyImageData(rawImageData, width, height)
+    const { data } = inkImageData
 
-    // ── Build ink mask ────────────────────────────────────────────────────────
+    // ── Build ink mask (alpha=0 หมายถึง non-ink จาก buildInkOnlyImageData) ──
     const mask = new Uint8Array(width * height)
     for (let i = 0; i < width * height; i++) {
-      const idx = i * 4
-      if (data[idx + 3] < 50) continue
-      const lum = data[idx] * 0.2126 + data[idx + 1] * 0.7152 + data[idx + 2] * 0.0722
-      if (lum < 180) mask[i] = 1
+      if (inkImageData.data[i * 4 + 3] > 0) mask[i] = 1
     }
 
     let inkCount = 0
     for (let i = 0; i < mask.length; i++) if (mask[i]) inkCount++
     if (inkCount < 5) return null
 
-    // ── Dilate 1px: ป้องกัน stroke บางๆ แตก ─────────────────────────────────
-    const dilated = new Uint8Array(width * height)
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        if (mask[y * width + x]) {
-          for (let dy = -1; dy <= 1; dy++) {
-            for (let dx = -1; dx <= 1; dx++) {
-              const ny2 = y + dy, nx2 = x + dx
-              if (ny2 >= 0 && ny2 < height && nx2 >= 0 && nx2 < width)
-                dilated[ny2 * width + nx2] = 1
-            }
-          }
-        }
-      }
-    }
-
     // ── Tight bounding box ────────────────────────────────────────────────────
     let bxMin = width, bxMax = 0, byMin = height, byMax = 0
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
-        if (dilated[y * width + x]) {
+        if (mask[y * width + x]) {
           if (x < bxMin) bxMin = x
           if (x > bxMax) bxMax = x
           if (y < byMin) byMin = y
@@ -163,92 +149,146 @@ function traceToSVGPath(inkCanvas, width, height) {
     const toSvgX = x => PAD + ((x - bxMin) / bw) * (100 - PAD * 2)
     const toSvgY = y => PAD + ((y - byMin) / bh) * (100 - PAD * 2)
 
-    // ── Row-span connected blob extraction ────────────────────────────────────
-    const rowSpans = []
-    for (let y = byMin; y <= byMax; y++) {
-      const spans = []
-      let inRun = false, x0 = 0
-      for (let x = bxMin; x <= bxMax + 1; x++) {
-        const ink = x <= bxMax && dilated[y * width + x] === 1
-        if (ink && !inRun) { inRun = true; x0 = x }
-        else if (!ink && inRun) { inRun = false; spans.push({ x0, x1: x - 1 }) }
+    // ── Centerline / medial-axis tracing ─────────────────────────────────────
+    // แทน silhouette outline ด้วย centerline จริงๆ: หา midpoint ของแต่ละ column
+    // และแต่ละ row แล้วนำมา cluster เป็น stroke segments
+    //
+    // Algorithm: สำหรับแต่ละ row หา mid-y ของ ink run แต่ละ run
+    // (midpoint ระหว่าง top และ bottom ของ ink ใน column นั้น)
+    // จากนั้น chain ต่อกันเป็น polyline และ smooth ด้วย Catmull-Rom
+
+    // Step 1: หา centerline points ทุก column (x) ในแต่ละ connected run
+    // ใช้ column scan (vertical) เพราะ handwriting ส่วนใหญ่ไหลซ้าย-ขวา
+    const colCenters = [] // [{ x, y }] centerline per column
+    for (let x = bxMin; x <= bxMax; x++) {
+      let runStart = -1
+      for (let y = byMin; y <= byMax + 1; y++) {
+        const ink = y <= byMax && mask[y * width + x] === 1
+        if (ink && runStart < 0) { runStart = y }
+        else if (!ink && runStart >= 0) {
+          const midY = (runStart + y - 1) / 2
+          colCenters.push({ x, y: midY })
+          runStart = -1
+        }
       }
-      rowSpans.push(spans)
     }
 
-    // BFS blob grouping on row-spans
-    const spanId = rowSpans.map(spans => new Int32Array(spans.length).fill(-1))
-    let blobId = 0
-    const blobRows = []
+    // Step 2: ทำเหมือนกันกับ row scan เพื่อจับ vertical strokes
+    const rowCenters = []
+    for (let y = byMin; y <= byMax; y++) {
+      let runStart = -1
+      for (let x = bxMin; x <= bxMax + 1; x++) {
+        const ink = x <= bxMax && mask[y * width + x] === 1
+        if (ink && runStart < 0) { runStart = x }
+        else if (!ink && runStart >= 0) {
+          const midX = (runStart + x - 1) / 2
+          rowCenters.push({ x: midX, y })
+          runStart = -1
+        }
+      }
+    }
 
-    for (let ri = 0; ri < rowSpans.length; ri++) {
-      for (let si = 0; si < rowSpans[ri].length; si++) {
-        if (spanId[ri][si] >= 0) continue
-        const id = blobId++
-        blobRows.push([])
-        const queue = [[ri, si]]
-        spanId[ri][si] = id
-        while (queue.length) {
-          const [r, s] = queue.shift()
-          const { x0, x1 } = rowSpans[r][s]
-          blobRows[id].push({ y: byMin + r, x0, x1 })
-          for (const nr of [r - 1, r + 1]) {
-            if (nr < 0 || nr >= rowSpans.length) continue
-            for (let ns = 0; ns < rowSpans[nr].length; ns++) {
-              if (spanId[nr][ns] >= 0) continue
-              const { x0: ax0, x1: ax1 } = rowSpans[nr][ns]
-              if (ax1 >= x0 - 1 && ax0 <= x1 + 1) {
-                spanId[nr][ns] = id
-                queue.push([nr, ns])
-              }
-            }
+    // Step 3: รวม centerline points และ sort ตาม x, y
+    // ลด density โดย grid-quantize เพื่อลด noise
+    const QUANT = Math.max(2, Math.round(Math.min(bw, bh) / 30))
+    const seen = new Set()
+    const centers = []
+    for (const p of [...colCenters, ...rowCenters]) {
+      const qx = Math.round(p.x / QUANT) * QUANT
+      const qy = Math.round(p.y / QUANT) * QUANT
+      const key = `${qx},${qy}`
+      if (!seen.has(key)) { seen.add(key); centers.push({ x: qx, y: qy }) }
+    }
+
+    if (centers.length < 2) return null
+
+    // Step 4a: BFS cluster — จัดกลุ่ม points ที่ใกล้กันเป็น stroke แยก
+    // ป้องกันการเชื่อม stroke คนละกลุ่ม (=, ", [], {}, ; ฯลฯ)
+    const CONNECT_R = QUANT * 4
+    const CONNECT_R2 = CONNECT_R * CONNECT_R
+    const clusterOf = new Int32Array(centers.length).fill(-1)
+    let numClusters = 0
+
+    for (let i = 0; i < centers.length; i++) {
+      if (clusterOf[i] >= 0) continue
+      const cid = numClusters++
+      const queue = [i]
+      clusterOf[i] = cid
+      while (queue.length) {
+        const cur = queue.pop()
+        for (let j = 0; j < centers.length; j++) {
+          if (clusterOf[j] >= 0) continue
+          const dx = centers[j].x - centers[cur].x
+          const dy = centers[j].y - centers[cur].y
+          if (dx * dx + dy * dy <= CONNECT_R2) {
+            clusterOf[j] = cid
+            queue.push(j)
           }
         }
       }
     }
 
-    const pathCmds = []
+    // Step 4b: ภายในแต่ละ cluster ทำ nearest-neighbor chain (ระยะสั้น)
+    // chains เป็น array ของ {x,y} point objects (SVG coords แล้ว)
+    const chains = []
+    for (let cid = 0; cid < numClusters; cid++) {
+      const cPts = centers.filter((_, i) => clusterOf[i] === cid)
+      if (cPts.length < 2) continue
+      // sort ตาม x ก่อน (handwriting ไหลซ้าย→ขวา)
+      cPts.sort((a, b) => a.x - b.x || a.y - b.y)
 
-    for (const rows of blobRows) {
-      if (rows.length === 0) continue
-      rows.sort((a, b) => a.y - b.y)
-
-      const xMin2 = Math.min(...rows.map(r => r.x0))
-      const xMax2 = Math.max(...rows.map(r => r.x1))
-      const len2 = xMax2 - xMin2 + 1
-      const topY = new Float32Array(len2).fill(Infinity)
-      const botY = new Float32Array(len2).fill(-Infinity)
-
-      for (const r of rows) {
-        for (let x = r.x0; x <= r.x1; x++) {
-          const xi = x - xMin2
-          if (r.y < topY[xi]) topY[xi] = r.y
-          if (r.y > botY[xi]) botY[xi] = r.y
+      const usedLocal = new Uint8Array(cPts.length)
+      for (let si = 0; si < cPts.length; si++) {
+        if (usedLocal[si]) continue
+        const chain = [si]
+        usedLocal[si] = 1
+        let cur = si
+        for (;;) {
+          let best = -1, bestD = Infinity
+          for (let j = 0; j < cPts.length; j++) {
+            if (usedLocal[j]) continue
+            const dx = cPts[j].x - cPts[cur].x
+            const dy = cPts[j].y - cPts[cur].y
+            const d = dx * dx + dy * dy
+            if (d < bestD) { bestD = d; best = j }
+          }
+          if (best < 0 || bestD > CONNECT_R2 * 2.25) break
+          chain.push(best)
+          usedLocal[best] = 1
+          cur = best
+        }
+        if (chain.length >= 2) {
+          // แปลงเป็น SVG coords ตรงนี้เลย
+          chains.push(chain.map(ci => ({
+            x: toSvgX(cPts[ci].x),
+            y: toSvgY(cPts[ci].y),
+          })))
         }
       }
+    }
 
-      const upper = [], lower = []
-      for (let xi = 0; xi < len2; xi++) {
-        if (topY[xi] === Infinity) continue
-        upper.push({ x: toSvgX(xMin2 + xi), y: toSvgY(topY[xi]) })
-        lower.push({ x: toSvgX(xMin2 + xi), y: toSvgY(botY[xi] + 1) })
+    if (chains.length === 0) return null
+
+    // Step 5: แปลง chains เป็น SVG path ด้วย Catmull-Rom → cubic bezier
+    const pathCmds = []
+    for (const rawPts of chains) {
+      if (rawPts.length < 2) continue
+      const simplified = dpSimplify(rawPts, 0.8)
+      if (simplified.length < 2) continue
+
+      let d = `M ${simplified[0].x.toFixed(1)} ${simplified[0].y.toFixed(1)}`
+      for (let k = 0; k < simplified.length - 1; k++) {
+        const p0 = simplified[Math.max(0, k - 1)]
+        const p1 = simplified[k]
+        const p2 = simplified[k + 1]
+        const p3 = simplified[Math.min(simplified.length - 1, k + 2)]
+        const tension = 0.4
+        const cp1x = p1.x + (p2.x - p0.x) * tension
+        const cp1y = p1.y + (p2.y - p0.y) * tension
+        const cp2x = p2.x - (p3.x - p1.x) * tension
+        const cp2y = p2.y - (p3.y - p1.y) * tension
+        d += ` C ${cp1x.toFixed(1)} ${cp1y.toFixed(1)}, ${cp2x.toFixed(1)} ${cp2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`
       }
-
-      if (upper.length === 0) continue
-      if (upper.length === 1) {
-        const px = upper[0].x.toFixed(1)
-        pathCmds.push(`M ${px} ${upper[0].y.toFixed(1)} L ${px} ${lower[0].y.toFixed(1)}`)
-        continue
-      }
-
-      const su = dpSimplify(upper.map(p => ({ x: parseFloat(p.x.toFixed(1)), y: parseFloat(p.y.toFixed(1)) })), 0.5)
-      const sl = dpSimplify(lower.map(p => ({ x: parseFloat(p.x.toFixed(1)), y: parseFloat(p.y.toFixed(1)) })), 0.5)
-
-      let d = `M ${su[0].x} ${su[0].y}`
-      for (let k = 1; k < su.length; k++) d += ` L ${su[k].x} ${su[k].y}`
-      d += ` L ${sl[sl.length - 1].x} ${sl[sl.length - 1].y}`
-      for (let k = sl.length - 2; k >= 0; k--) d += ` L ${sl[k].x} ${sl[k].y}`
-      d += ' Z'
       pathCmds.push(d)
     }
 

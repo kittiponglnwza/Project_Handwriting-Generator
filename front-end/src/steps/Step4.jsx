@@ -152,7 +152,7 @@ function VariantThumb({ ch, svgPath, viewBox = '0 0 100 100', label, borderColor
       }}>
         {valid ? (
           <svg viewBox={viewBox} style={{ width: '84%', height: '84%', overflow: 'visible' }}>
-            <path d={svgPath} fill="none" stroke={C.ink} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+            <path d={svgPath} fill="none" stroke={C.ink} strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         ) : (
           <span style={{ fontSize: 30, color: C.inkMd, lineHeight: 1 }}>{ch}</span>
@@ -788,7 +788,7 @@ export default function Step4({ glyphs = [], fontStyle, onFontStyleChange, onFon
                   <div style={{ width: 44, height: 44, margin: '0 auto 6px', background: '#fff', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', border: `1px dashed ${C.borderMd}` }}>
                     {hasSvg ? (
                       <svg viewBox={g.viewBox || '0 0 100 100'} style={{ width: '80%', height: '80%', overflow: 'visible' }}>
-                        <path d={g.svgPath} fill="none" stroke={C.ink} strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" />
+                        <path d={g.svgPath} fill="none" stroke={C.ink} strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
                       </svg>
                     ) : (
                       <span style={{ fontSize: 24, color: C.inkMd }}>{ch}</span>
