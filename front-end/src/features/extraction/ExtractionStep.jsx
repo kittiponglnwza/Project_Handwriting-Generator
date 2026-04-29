@@ -13,7 +13,7 @@ import Btn from "../../shared/components/Btn"
 import InfoBox from "../../shared/components/InfoBox"
 import C from "../../styles/colors"
 import { buildAutoPageProfiles } from "../../engine/vision/calibration.js"
-import { getGridGeometry } from "../../engine/vision/glyphPipeline.js"
+import { getGridGeometry, traceAllGlyphs } from "../../engine/vision/glyphPipeline.js"
 import { ZERO_CALIBRATION } from "../../engine/vision/constants.js"
 import { Adjuster, GridDebugOverlay, PageDebugOverlay } from "./ExtractionPanels.jsx"
 import DebugOverlay from "../../shared/debug/DebugOverlay.jsx"
@@ -79,10 +79,17 @@ export default function ExtractionStep({ parsedFile, onGlyphsUpdate, pipelineMac
       // VisionEngine.processPages() handles calibration → extract → crop → normalize → score internally
       const result = await engine.processPages(pages, chars, calibration)
 
+      setProgress(70)
+      pipelineMachine?.transition(PipelineStates.TRACING)
+
+      // Trace SVG paths (potrace) — needed for Step 4 font compilation
+      const rawGlyphs = result?.glyphs ?? []
+      const traced = rawGlyphs.length > 0 ? await traceAllGlyphs(rawGlyphs) : rawGlyphs
+      const finalGlyphs = traced?.length ? traced : rawGlyphs
+
       setProgress(90)
       pipelineMachine?.transition(PipelineStates.COMPOSING)
 
-      const finalGlyphs = result?.glyphs ?? []
       const qaRep = result?.qaReport ?? buildQaReport(finalGlyphs)
 
       setQaReport(qaRep)
