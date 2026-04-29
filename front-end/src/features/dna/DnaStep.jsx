@@ -46,6 +46,23 @@ const LOG_COLORS = {
 // ─── Sub-components ────────────────────────────────────────────────────────────
 
 /** Horizontal progress bar */
+// ── Auto viewBox from path bounding box ─────────────────────────────────────
+function computeViewBox(svgPath, pad = 8) {
+  if (!svgPath) return '0 0 100 100'
+  const nums = []
+  const re = /[MLCQ]\s*([-\d.]+)\s+([-\d.]+)/g
+  let m
+  while ((m = re.exec(svgPath)) !== null) {
+    nums.push({ x: parseFloat(m[1]), y: parseFloat(m[2]) })
+  }
+  if (nums.length === 0) return '0 0 100 100'
+  const xs = nums.map(p => p.x), ys = nums.map(p => p.y)
+  const minX = Math.min(...xs) - pad
+  const minY = Math.min(...ys) - pad
+  return `${minX} ${minY} ${Math.max(...xs) - minX + pad} ${Math.max(...ys) - minY + pad}`
+}
+
+
 function ProgressBar({ pct, label, sublabel }) {
   return (
     <div>
@@ -151,7 +168,7 @@ function VariantThumb({ ch, svgPath, viewBox = '0 0 100 100', label, borderColor
         transition: 'all 0.15s',
       }}>
         {valid ? (
-          <svg viewBox={viewBox} style={{ width: '84%', height: '84%', overflow: 'hidden' }} preserveAspectRatio="xMidYMid meet">
+          <svg viewBox={computeViewBox(svgPath)} style={{ width: '90%', height: '90%', overflow: 'hidden' }} preserveAspectRatio="xMidYMid meet">
             <path d={svgPath} fill="none" stroke={C.ink} strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         ) : (
@@ -772,7 +789,7 @@ export default function DnaControls({ glyphs = [], fontStyle, onFontStyleChange,
                   )}
                   <div style={{ width: 44, height: 44, margin: '0 auto 6px', background: '#fff', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', border: `1px dashed ${C.borderMd}` }}>
                     {hasSvg ? (
-                      <svg viewBox={g.viewBox || '0 0 100 100'} style={{ width: '80%', height: '80%', overflow: 'hidden' }} preserveAspectRatio="xMidYMid meet">
+                      <svg viewBox={computeViewBox(g.svgPath)} style={{ width: '80%', height: '80%', overflow: 'hidden' }} preserveAspectRatio="xMidYMid meet">
                         <path d={g.svgPath} fill="none" stroke={C.ink} strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
                       </svg>
                     ) : (

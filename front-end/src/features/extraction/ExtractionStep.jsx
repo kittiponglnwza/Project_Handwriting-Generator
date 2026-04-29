@@ -25,26 +25,26 @@ import QADashboard from "../../shared/debug/QADashboard.jsx"
 
 // ─── Tabs ──────────────────────────────────────────────────────────────────────
 const TABS = [
-  { id: "glyphs",   label: "Glyphs" },
-  { id: "pages",    label: "Page Debug" },
-  { id: "qa",       label: "QA" },
-  { id: "telemetry",label: "Telemetry" },
+  { id: "glyphs", label: "Glyphs" },
+  { id: "pages", label: "Page Debug" },
+  { id: "qa", label: "QA" },
+  { id: "telemetry", label: "Telemetry" },
 ]
 
 // ─── Main Component ────────────────────────────────────────────────────────────
 export default function ExtractionStep({ parsedFile, onGlyphsUpdate, pipelineMachine }) {
-  const [tab, setTab]                   = useState("glyphs")
-  const [glyphs, setGlyphs]             = useState([])
-  const [qaReport, setQaReport]         = useState(null)
+  const [tab, setTab] = useState("glyphs")
+  const [glyphs, setGlyphs] = useState([])
+  const [qaReport, setQaReport] = useState(null)
   const [telemetryData, setTelemetryData] = useState({})
-  const [status, setStatus]             = useState("idle") // idle | running | done | error
-  const [errorMsg, setErrorMsg]         = useState("")
-  const [progress, setProgress]         = useState(0)
-  const [calibration, setCalibration]   = useState(ZERO_CALIBRATION)
-  const [showDebug, setShowDebug]       = useState(false)
+  const [status, setStatus] = useState("idle") // idle | running | done | error
+  const [errorMsg, setErrorMsg] = useState("")
+  const [progress, setProgress] = useState(0)
+  const [calibration, setCalibration] = useState(ZERO_CALIBRATION)
+  const [showDebug, setShowDebug] = useState(false)
 
   const visionEngineRef = useRef(null)
-  const abortRef        = useRef(false)
+  const abortRef = useRef(false)
 
   // ── Auto-calibration from pages ──────────────────────────────────────────────
   const autoProfiles = useMemo(() => {
@@ -93,7 +93,14 @@ export default function ExtractionStep({ parsedFile, onGlyphsUpdate, pipelineMac
       const qaRep = result?.qaReport ?? buildQaReport(finalGlyphs)
 
       setQaReport(qaRep)
+
       setGlyphs(finalGlyphs)
+      console.log("sample glyph:", JSON.stringify({
+        ch: finalGlyphs[0]?.ch,
+        viewBox: finalGlyphs[0]?.viewBox,
+        svgPath: finalGlyphs[0]?.svgPath?.slice(0, 80)
+      }))
+      
       onGlyphsUpdate(finalGlyphs)
       setProgress(100)
       setStatus("done")
@@ -202,10 +209,10 @@ export default function ExtractionStep({ parsedFile, onGlyphsUpdate, pipelineMac
             Manual Calibration
           </p>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-            <Adjuster label="Offset X" value={calibration.offsetX}   min={-60} max={60} step={1} onChange={v => handleCalChange("offsetX",    v)} />
-            <Adjuster label="Offset Y" value={calibration.offsetY}   min={-60} max={60} step={1} onChange={v => handleCalChange("offsetY",    v)} />
-            <Adjuster label="Cell ±"   value={calibration.cellAdjust} min={-40} max={40} step={1} onChange={v => handleCalChange("cellAdjust", v)} />
-            <Adjuster label="Gap ±"    value={calibration.gapAdjust}  min={-20} max={20} step={1} onChange={v => handleCalChange("gapAdjust",  v)} />
+            <Adjuster label="Offset X" value={calibration.offsetX} min={-60} max={60} step={1} onChange={v => handleCalChange("offsetX", v)} />
+            <Adjuster label="Offset Y" value={calibration.offsetY} min={-60} max={60} step={1} onChange={v => handleCalChange("offsetY", v)} />
+            <Adjuster label="Cell ±" value={calibration.cellAdjust} min={-40} max={40} step={1} onChange={v => handleCalChange("cellAdjust", v)} />
+            <Adjuster label="Gap ±" value={calibration.gapAdjust} min={-20} max={20} step={1} onChange={v => handleCalChange("gapAdjust", v)} />
           </div>
           <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
             <Btn variant="ghost" size="sm" onClick={() => setCalibration(ZERO_CALIBRATION)}>Reset</Btn>
@@ -317,8 +324,8 @@ function buildQaReport(glyphs) {
   const goodRate = total > 0 ? (counts.excellent + counts.good) / total : 0
 
   const recommendations = []
-  if (counts.missing > 0)   recommendations.push(`${counts.missing} cells appear empty — check scan quality or calibration.`)
-  if (counts.overflow > 0)  recommendations.push(`${counts.overflow} glyphs overflow their cell — try reducing Cell size.`)
+  if (counts.missing > 0) recommendations.push(`${counts.missing} cells appear empty — check scan quality or calibration.`)
+  if (counts.overflow > 0) recommendations.push(`${counts.overflow} glyphs overflow their cell — try reducing Cell size.`)
   if (averageConfidence < 0.6) recommendations.push("Low average confidence — consider re-scanning at higher DPI.")
 
   return { ...counts, total, averageConfidence, goodRate, issues, recommendations }
