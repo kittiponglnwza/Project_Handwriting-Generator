@@ -1,4 +1,4 @@
-import { HGMETA_RE, HGCHAR_RE, TEMPLATE_CODE_RE, TEMPLATE_INDEX_RE } from "./constants.js"
+import { HGMETA_RE, HGCHAR_RE, TEMPLATE_CODE_RE, TEMPLATE_INDEX_RE } from "../constants.js"
 import { decodeHgQrCharsPayload } from "./qr.js"
 
 // ---------------------------------------------------------------------------

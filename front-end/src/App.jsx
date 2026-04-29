@@ -4,7 +4,8 @@ import ErrorBoundary from "./components/ErrorBoundary"
 import Step1 from "./steps/Step1"
 import Step2 from "./steps/Step2"
 import Step3 from "./steps/Step3"
-import { buildVersionedGlyphs } from "./lib/glyphVersions.js"
+import { buildVersionedGlyphs } from "./domains/preview/glyphVersions.js"
+import { usePipeline } from "./hooks/usePipeline.js"
 import C from "./styles/colors"
 
 // ─── Lazy-loaded heavy steps ──────────────────────────────────────────────────
@@ -69,6 +70,7 @@ function StepLoader() {
 export default function App() {
   const [step, setStep] = useState(1)
   const [appState, setAppState] = useState(INITIAL_STATE)
+  const pipeline = usePipeline()
 
   useEffect(() => {
     const glyphs = appState.glyphResult?.glyphs ?? []
@@ -221,7 +223,7 @@ export default function App() {
 
             {activeStep === 3 && (
               <ErrorBoundary key={`step3-${appState.parsedFile?.file?.name}`}>
-                <Step3 parsedFile={appState.parsedFile} onGlyphsUpdate={handleGlyphsUpdate} />
+                <Step3 parsedFile={appState.parsedFile} onGlyphsUpdate={handleGlyphsUpdate} pipelineMachine={pipeline.machine} />
               </ErrorBoundary>
             )}
 

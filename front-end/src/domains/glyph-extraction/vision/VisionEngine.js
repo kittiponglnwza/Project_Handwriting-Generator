@@ -11,10 +11,10 @@ import { SmartCropEngine } from './SmartCropEngine.js'
 import { GlyphNormalizer } from './GlyphNormalizer.js'
 import { ConfidenceScoring } from './ConfidenceScoring.js'
 import { ThaiSpecialHandling } from './ThaiSpecialHandling.js'
-import { extractGlyphsFromCanvas, getGridGeometry, getPageCapacity } from '../../lib/step3/glyphPipeline.js'
-import { GRID_COLS, MIN_TRUSTED_INDEX_TARGETS, TEMPLATE_CALIBRATION } from '../../lib/step3/constants.js'
-import { buildOrderedCellRectsForPage } from '../../lib/step3/regDots.js'
-import { mergeCalibration } from '../../lib/step3/utils.js'
+import { extractGlyphsFromCanvas, getGridGeometry, getPageCapacity } from '../pipeline/glyphPipeline.js'
+import { GRID_COLS, MIN_TRUSTED_INDEX_TARGETS, TEMPLATE_CALIBRATION } from '../constants.js'
+import { buildOrderedCellRectsForPage } from '../pipeline/regDots.js'
+import { mergeCalibration } from '../pipeline/utils.js'
 
 export class VisionEngine {
   constructor() {

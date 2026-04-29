@@ -22,11 +22,11 @@ import { useEffect, useMemo, useRef, useState, useCallback } from "react"
 import Btn from "../components/Btn"
 import InfoBox from "../components/InfoBox"
 import C from "../styles/colors"
-import { buildAutoPageProfiles } from "../lib/step3/calibration.js"
-import { getGridGeometry, traceAllGlyphs } from "../lib/step3/glyphPipeline.js"
+import { buildAutoPageProfiles } from "../domains/glyph-extraction/pipeline/calibration.js"
+import { getGridGeometry, traceAllGlyphs } from "../domains/glyph-extraction/pipeline/glyphPipeline.js"
 import {
   ZERO_CALIBRATION,
-} from "../lib/step3/constants.js"
+} from "../domains/glyph-extraction/constants.js"
 import { Adjuster, GridDebugOverlay, PageDebugOverlay } from "./step3/Step3Panels.jsx"
 import DebugOverlay from "../components/DebugOverlay.jsx"
 
@@ -36,7 +36,7 @@ import { Telemetry } from "../engine/Telemetry.js"
 import { PerformanceGovernor } from "../engine/PerformanceGovernor.js"
 
 // NEW: Vision Engine imports
-import { VisionEngine } from "../core/vision/VisionEngine.js"
+import { VisionEngine } from "../domains/glyph-extraction/vision/VisionEngine.js"
 import QADashboard from "../components/QADashboard.jsx"
 
 
@@ -112,7 +112,7 @@ function SkeletonGrid({ count = 20, label = "Extracting glyphs…" }) {
   )
 }
 
-export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
+export default function Step3({ parsedFile, onGlyphsUpdate = () => {}, pipelineMachine = null }) {
   const chars = parsedFile?.characters ?? []
 
   // NEW: State machine integration
@@ -144,7 +144,10 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
     // Guard: ถ้า refs ถูก set แล้ว (HMR / StrictMode double-invoke) ไม่ต้อง re-create
     if (stateMachineRef.current) return
 
-    const stateMachine  = new PipelineStateMachine()
+    const stateMachine  = pipelineMachine ?? new PipelineStateMachine()
+    const current = stateMachine.getCurrentState()
+    setPipelineState(current.state)
+    setPipelineContext(current.context)
     // Subscribe to state changes
     const unsubscribe = stateMachine.subscribe({
       onStateChange: (newState, oldState, context) => {
@@ -180,7 +183,7 @@ export default function Step3({ parsedFile, onGlyphsUpdate = () => {} }) {
       stateMachineRef.current  = null
       visionEngineRef.current  = null
     }
-  }, [])
+  }, [pipelineMachine])
 
   // ── Load page data from parsedFile (no PDF I/O) ────────────────────────────
   useEffect(() => {

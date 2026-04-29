@@ -15,7 +15,7 @@
 // Import opentype.js as local package — run `npm install opentype.js` first
 import opentype from 'opentype.js'
 
-import { deformPath } from '../../lib/glyphVersions.js'
+import { deformPath } from '../preview/glyphVersions.js'
 import {
   UPM, ASCENDER, DESCENDER, X_HEIGHT, CAP_HEIGHT, GLYPH_SIZE, SCALE,
   computeGlyphMetrics, isThaiNonSpacing, getGlyphClass,

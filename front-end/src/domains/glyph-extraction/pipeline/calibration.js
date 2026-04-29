@@ -1,4 +1,4 @@
-import { ZERO_CALIBRATION, GRID_COLS, MIN_TRUSTED_INDEX_TARGETS } from "./constants.js"
+import { ZERO_CALIBRATION, GRID_COLS, MIN_TRUSTED_INDEX_TARGETS } from "../constants.js"
 import { getGridGeometry } from "./glyphPipeline.js"
 
 function getBlueSignal(data, pageWidth, pageHeight, x, y) {

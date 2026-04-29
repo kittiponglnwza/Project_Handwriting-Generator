@@ -1,8 +1,8 @@
 import { useEffect, useRef } from "react"
 import C from "../../styles/colors"
-import { GRID_GEOMETRY, GRID_COLS } from "../../lib/step3/constants.js"
-import { clamp } from "../../lib/step3/utils.js"
-import { buildOrderedCellRectsForPage, buildCellRectsFromDots, sortCellRectsReadingOrder } from "../../lib/step3/regDots.js"
+import { GRID_GEOMETRY, GRID_COLS } from "../../domains/glyph-extraction/constants.js"
+import { clamp } from "../../domains/glyph-extraction/pipeline/utils.js"
+import { buildOrderedCellRectsForPage, buildCellRectsFromDots, sortCellRectsReadingOrder } from "../../domains/glyph-extraction/pipeline/regDots.js"
 
 export function Adjuster({ label, value, min, max, step, onChange }) {
   return (

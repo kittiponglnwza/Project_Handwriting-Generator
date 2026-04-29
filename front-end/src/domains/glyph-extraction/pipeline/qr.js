@@ -1,4 +1,4 @@
-import { HGQR_RE } from "./constants.js"
+import { HGQR_RE } from "../constants.js"
 
 export function decodeHgQrCharsPayload(b64url) {
   if (!b64url) return null

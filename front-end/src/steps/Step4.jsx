@@ -3,10 +3,10 @@
  *
  * Architecture:
  *   Step4.jsx          UI shell, state machine, tab routing
- *   step4/fontBuilder  opentype.js compilation engine
- *   step4/metrics      per-glyph smart advance width + bbox
- *   step4/thaiFeatures GSUB salt/calt + GPOS mark-to-base
- *   step4/download     safe Blob download + JSZip export
+ *   domains/font-compilation/fontBuilder  opentype.js compilation engine
+ *   domains/font-compilation/metrics      per-glyph smart advance width + bbox
+ *   domains/font-compilation/thaiFeatures GSUB salt/calt + GPOS mark-to-base
+ *   domains/font-compilation/download     safe Blob download + JSZip export
  *
  * Props:
  *   glyphs: Glyph[]  — from appState.glyphResult.glyphs
@@ -24,13 +24,13 @@ import {
   buildMetadata,
   buildExportGlyphMap,
   validateSvgPath,
-} from './step4/fontBuilder.js'
-import { getGlyphClass, isThaiNonSpacing } from './step4/metrics.js'
+} from '../domains/font-compilation/fontBuilder.js'
+import { getGlyphClass, isThaiNonSpacing } from '../domains/font-compilation/metrics.js'
 import {
   downloadBuffer,
   downloadJSON,
   downloadFontZip,
-} from './step4/download.js'
+} from '../domains/font-compilation/download.js'
 
 // ─── Design tokens ─────────────────────────────────────────────────────────────
 const FONT_NAME = 'MyHandwriting'

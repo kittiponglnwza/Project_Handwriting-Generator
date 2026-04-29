@@ -1,4 +1,4 @@
-import { MIN_TRUSTED_INDEX_TARGETS } from "./constants.js"
+import { MIN_TRUSTED_INDEX_TARGETS } from "../constants.js"
 
 /** @param {unknown[]} pages */
 export function buildTargetsFromPages(pages) {

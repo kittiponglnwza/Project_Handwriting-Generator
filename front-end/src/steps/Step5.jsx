@@ -7,6 +7,7 @@
  */
 
 import { useState, useRef, useCallback, useEffect, useMemo } from "react"
+import { previewColors as T } from "../styles/tokens.js"
 
 if (typeof document !== 'undefined' && !document.getElementById('step5-keyframes')) {
   const s = document.createElement('style')
@@ -17,25 +18,6 @@ if (typeof document !== 'undefined' && !document.getElementById('step5-keyframes
     @keyframes inkDrop { from { opacity: 0; transform: scale(.92) } to { opacity: 1; transform: scale(1) } }
   `
   document.head.appendChild(s)
-}
-
-// ─── Design tokens ────────────────────────────────────────────────────────────
-const T = {
-  // Ink-on-paper palette
-  paper:    "#F5F0E8",
-  paperDk:  "#EDE5D0",
-  ink:      "#1C1714",
-  inkMd:    "#6B5E52",
-  inkLt:    "#B8A898",
-  cream:    "#FAF7F2",
-  rust:     "#B84C2E",
-  sage:     "#4A7C59",
-  indigo:   "#3D5A8A",
-  gold:     "#C4922A",
-  border:   "#DDD5C4",
-  borderMd: "#C8BBAA",
-  shadow:   "0 2px 8px rgba(28,23,20,.08), 0 8px 32px rgba(28,23,20,.06)",
-  shadowSm: "0 1px 4px rgba(28,23,20,.1)",
 }
 
 // ─── Paper configs ────────────────────────────────────────────────────────────

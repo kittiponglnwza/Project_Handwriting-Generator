@@ -38,15 +38,15 @@ import InfoBox from "../components/InfoBox"
 import Tag from "../components/Tag"
 import Btn from "../components/Btn"
 import C from "../styles/colors"
-import { collectTextAnchors } from "../lib/step3/pdfAnchors.js"
-import { decodeQRFromImageData, extractCharsetIfCompleteInQr } from "../lib/step3/qr.js"
-import { detectRegDots } from "../lib/step3/regDots.js"
-import { buildAutoPageProfiles } from "../lib/step3/calibration.js"
+import { collectTextAnchors } from "../domains/glyph-extraction/pipeline/pdfAnchors.js"
+import { decodeQRFromImageData, extractCharsetIfCompleteInQr } from "../domains/glyph-extraction/pipeline/qr.js"
+import { detectRegDots } from "../domains/glyph-extraction/pipeline/regDots.js"
+import { buildAutoPageProfiles } from "../domains/glyph-extraction/pipeline/calibration.js"
 import {
   MIN_TRUSTED_INDEX_TARGETS,
   TEMPLATE_CODE_RE,
   TEMPLATE_INDEX_RE,
-} from "../lib/step3/constants.js"
+} from "../domains/glyph-extraction/constants.js"
 
 GlobalWorkerOptions.workerSrc = pdfWorker
 

@@ -1,4 +1,4 @@
-import { GRID_COLS, GRID_GEOMETRY } from "./constants.js"
+import { GRID_COLS, GRID_GEOMETRY } from "../constants.js"
 import { clamp } from "./utils.js"
 
 export function classifyGlyph(imageData, width, height) {

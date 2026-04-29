@@ -1,4 +1,4 @@
-import { DEFAULT_CALIBRATION } from "./constants.js"
+import { DEFAULT_CALIBRATION } from "../constants.js"
 
 export function mergeCalibration(base, manual = DEFAULT_CALIBRATION) {
   return {
