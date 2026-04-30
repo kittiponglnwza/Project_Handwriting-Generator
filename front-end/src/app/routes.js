@@ -6,5 +6,4 @@ export const STEPS = [
   { id: 3, label: "Verify Glyphs",     icon: "03" },
   { id: 4, label: "DNA Profile",       icon: "04" },
   { id: 5, label: "Preview",           icon: "05" },
-  { id: 6, label: "Login",             icon: "06" },
 ]

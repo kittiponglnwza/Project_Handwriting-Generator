@@ -173,33 +173,7 @@ export default function AppLayout({
                   Sign in
                 </button>
 
-                <button
-                  onClick={onOpenLogin}
-                  style={{
-                    width: "100%",
-                    marginTop: 6,
-                    padding: "7px 0",
-                    border: `1px solid ${C.border}`,
-                    borderRadius: 8,
-                    background: "transparent",
-                    color: C.inkMd,
-                    cursor: "pointer",
-                    fontSize: 11,
-                    fontFamily: "inherit",
-                    transition: "all 0.15s",
-                    letterSpacing: "0.01em",
-                  }}
-                  onMouseEnter={e => {
-                    e.currentTarget.style.background = C.bgMuted
-                    e.currentTarget.style.borderColor = C.borderMd
-                  }}
-                  onMouseLeave={e => {
-                    e.currentTarget.style.background = "transparent"
-                    e.currentTarget.style.borderColor = C.border
-                  }}
-                >
-                  Create account
-                </button>
+
               </>
             )}
           </div>
