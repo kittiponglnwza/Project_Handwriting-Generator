@@ -150,12 +150,10 @@ function transformCoords(cmds, fn) {
  * Identity transform with imperceptible micro-jitter (< ±0.4 units) so each
  * glyph still has a slightly unique texture from its siblings.
  */
-function applyBase(cmds, rng) {
-  // Micro-texture: barely-there noise so the font doesn't look laser-printed
-  return transformCoords(cmds, (x, y) => [
-    x + (rng() - 0.5) * 0.4,
-    y + (rng() - 0.5) * 0.3,
-  ])
+function applyBase(cmds, _rng) {
+  // Base = original path untouched — no transform, no noise.
+  // This is the cleanest/prettiest form, used for first occurrence of each word.
+  return cmds
 }
 
 /**
@@ -255,22 +253,23 @@ function applyAlt4(cmds, rng) {
 export function deformPath(svgPath, version = 1) {
   if (!svgPath || typeof svgPath !== 'string') return svgPath
 
+  // version 1 = base: return original path verbatim.
+  // Bypasses parse/serialize so validateSvgPath always passes downstream.
+  if (version === 1) return svgPath
+
   const cmds = parsePath(svgPath)
   if (cmds.length === 0) return svgPath
 
-  // Seed the PRNG uniquely per (path content, version) so identical source
-  // glyphs with different versions still diverge deterministically.
   const seed = hashStr(svgPath.slice(0, 64) + version)
   const rng  = makePrng(seed)
 
   let transformed
   switch (version) {
-    case 1:  transformed = applyBase(cmds, rng);  break
     case 2:  transformed = applyAlt1(cmds, rng);  break
     case 3:  transformed = applyAlt2(cmds, rng);  break
     case 4:  transformed = applyAlt3(cmds, rng);  break
     case 5:  transformed = applyAlt4(cmds, rng);  break
-    default: transformed = applyBase(cmds, rng);  break
+    default: transformed = applyAlt1(cmds, rng);  break
   }
 
   return serializePath(transformed)
@@ -285,7 +284,7 @@ export function deformPath(svgPath, version = 1) {
  */
 export function deformAll(svgPath) {
   return {
-    base: deformPath(svgPath, 1),
+    default: deformPath(svgPath, 1),  // key matches DnaStep.jsx VARIANT_KEYS
     alt1: deformPath(svgPath, 2),
     alt2: deformPath(svgPath, 3),
     alt3: deformPath(svgPath, 4),

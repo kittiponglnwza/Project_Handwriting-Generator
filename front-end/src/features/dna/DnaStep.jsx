@@ -37,8 +37,8 @@ import { ExportButtons }   from './ExportButtons.jsx'
 const FONT_NAME = 'MyHandwriting'
 
 const DEFAULT_STYLE  = { roughness: 30, neatness: 50, slant: 0, boldness: 100, randomness: 40 }
-const VARIANT_KEYS   = ['default', 'alt1', 'alt2']
-const STORAGE_KEY    = 'dna_variant_styles_v1'
+const VARIANT_KEYS   = ['default', 'alt1', 'alt2', 'alt3', 'alt4']
+const STORAGE_KEY    = 'dna_variant_styles_v2'
 
 function loadVariantStyles() {
   try {
@@ -57,6 +57,8 @@ function makeDefaultVariantStyles() {
     default: { ...DEFAULT_STYLE },
     alt1:    { ...DEFAULT_STYLE, slant: 5,  roughness: 40 },
     alt2:    { ...DEFAULT_STYLE, slant: 10, roughness: 60, randomness: 60 },
+    alt3:    { ...DEFAULT_STYLE, slant: 3,  boldness: 85,  randomness: 30 },
+    alt4:    { ...DEFAULT_STYLE, roughness: 70, randomness: 80 },
   }
 }
 
@@ -301,14 +303,29 @@ This is TopZ's project`
     const counters = {}  // ch → ครั้งที่เห็น (0-indexed)
     let result = ''
     for (const ch of text) {
+      if (ch === ' ' || ch === '\n' || ch === '\r') {
+        // word reset: clear counter so next occurrence is "first"
+        delete counters[ch]
+        result += ch
+        continue
+      }
       const entry = map.get(ch)
       if (!entry) { result += ch; continue }
       const count = counters[ch] ?? 0
       counters[ch] = count + 1
-      const mod = count % 3
-      if (mod === 0) result += ch  // default = Unicode จริง
-      else if (mod === 1) result += String.fromCodePoint(entry.alt1)
-      else result += String.fromCodePoint(entry.alt2)
+      // rotationSequence from fontBuilder: [default, alt1, alt2, alt3, default, alt4]
+      const seq = entry.rotationSequence
+      if (seq && seq.length > 0) {
+        result += String.fromCodePoint(seq[count % seq.length])
+      } else {
+        // fallback: 5-slot manual cycle
+        const mod = count % 5
+        if      (mod === 0) result += ch
+        else if (mod === 1) result += String.fromCodePoint(entry.alt1)
+        else if (mod === 2) result += String.fromCodePoint(entry.alt2)
+        else if (mod === 3) result += String.fromCodePoint(entry.alt3)
+        else                result += String.fromCodePoint(entry.alt4)
+      }
     }
     return result
   }
@@ -534,7 +551,7 @@ export default function DnaControls({ glyphs = [], fontStyle, onFontStyleChange,
   const glyphMap   = useMemo(() => hasGlyphs ? buildGlyphMap(glyphs, buildSeed) : new Map(), [glyphs, hasGlyphs, buildSeed])
   const entries    = useMemo(() => Array.from(glyphMap.entries()), [glyphMap])
   const charCount  = glyphMap.size
-  const totalVariants = charCount * 3
+  const totalVariants = charCount * 5
 
   const thaiCount  = useMemo(() =>
     entries.filter(([, d]) => d.codepoint >= 0x0E00 && d.codepoint <= 0x0E7F).length,
@@ -692,7 +709,7 @@ export default function DnaControls({ glyphs = [], fontStyle, onFontStyleChange,
         <div>
           <p style={{ fontSize: 18, fontFamily: "'DM Serif Display', serif", color: '#F0EBE0', fontWeight: 400 }}>
             Hybrid Font Generator
-            <span style={{ fontSize: 12, color: '#5C5340', fontFamily: 'monospace', marginLeft: 8 }}>v2.0</span>
+            <span style={{ fontSize: 12, color: '#5C5340', fontFamily: 'monospace', marginLeft: 8 }}>v3.0</span>
           </p>
           <p style={{ fontSize: 11, color: '#7A6E58', marginTop: 3 }}>
             Real TTF + WOFF · GSUB salt/calt · Smart per-glyph metrics
@@ -771,7 +788,7 @@ export default function DnaControls({ glyphs = [], fontStyle, onFontStyleChange,
                   fontFamily: 'monospace', outline: 'none', width: 160,
                 }}
               />
-              <p style={{ fontSize: 10, color: '#7A5040' }}>chars highlighted across all 3 variants below</p>
+              <p style={{ fontSize: 10, color: '#7A5040' }}>chars highlighted across all 5 variants below</p>
             </div>
           </div>
           {/* Highlighted preview */}
@@ -783,7 +800,7 @@ export default function DnaControls({ glyphs = [], fontStyle, onFontStyleChange,
                 <div key={ch} style={{ textAlign: 'center' }}>
                   <p style={{ fontSize: 9, color: '#7A5040', marginBottom: 4, fontFamily: 'monospace' }}>U+{ch.codePointAt(0).toString(16).toUpperCase().padStart(4,'0')}</p>
                   <div style={{ display: 'flex', gap: 4 }}>
-                    {[1,2,3].map(ver => {
+                    {[1,2,3,4,5].map(ver => {
                       const vg = glyphs.find(x => x.ch === ch && x.version === ver) ?? g
                       const vPath = vg?.svgPath
                       return (
@@ -805,7 +822,7 @@ export default function DnaControls({ glyphs = [], fontStyle, onFontStyleChange,
                   </div>
                   <p style={{ fontSize: 9, color: '#F0EBE0', marginTop: 4, fontWeight: 600 }}>{ch}</p>
                   <div style={{ display: 'flex', gap: 4, justifyContent: 'center', marginTop: 2 }}>
-                    {['v1','v2','v3'].map(v => <p key={v} style={{ fontSize: 7, color: '#5A3020', fontFamily: 'monospace' }}>{v}</p>)}
+                    {['v1','v2','v3','v4','v5'].map(v => <p key={v} style={{ fontSize: 7, color: '#5A3020', fontFamily: 'monospace' }}>{v}</p>)}
                   </div>
                 </div>
               )
@@ -836,7 +853,7 @@ export default function DnaControls({ glyphs = [], fontStyle, onFontStyleChange,
       {/* Stats */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 20 }}>
         <StatCard label="Characters"     value={charCount}        sub="unique glyphs" accent />
-        <StatCard label="Total Variants" value={totalVariants}    sub="3× per char"   accent />
+        <StatCard label="Total Variants" value={totalVariants}    sub="5× per char"   accent />
         <StatCard label="Thai / Latin"   value={`${thaiCount}/${latinCount}`} sub="scripts" />
         <StatCard label="Output"         value="TTF+WOFF"         sub="+ ZIP package" />
       </div>
@@ -869,7 +886,7 @@ export default function DnaControls({ glyphs = [], fontStyle, onFontStyleChange,
             <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 14, padding: '16px 20px' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
                 <p style={{ fontSize: 11, fontWeight: 500, letterSpacing: '0.1em', textTransform: 'uppercase', color: C.inkLt }}>
-                  1 Character → 3 Variants
+                  1 Character → 5 Variants
                 </p>
                 {hasGlyphs && (
                   <select value={previewChar ?? ''} onChange={e => setPreviewChar(e.target.value)}
@@ -886,8 +903,10 @@ export default function DnaControls({ glyphs = [], fontStyle, onFontStyleChange,
                 const isMark = previewData.codepoint ? isThaiNonSpacing(previewData.codepoint) : false
                 const VARIANTS = [
                   { key: 'default', svgPath: previewData.default, label: '.default', desc: 'original' },
-                  { key: 'alt1',    svgPath: previewData.alt1,    label: '.alt1',    desc: 'drooping tail' },
-                  { key: 'alt2',    svgPath: previewData.alt2,    label: '.alt2',    desc: 'wavy stroke' },
+                  { key: 'alt1',    svgPath: previewData.alt1,    label: '.alt1',    desc: 'slant' },
+                  { key: 'alt2',    svgPath: previewData.alt2,    label: '.alt2',    desc: 'baseline drop' },
+                  { key: 'alt3',    svgPath: previewData.alt3,    label: '.alt3',    desc: 'narrow' },
+                  { key: 'alt4',    svgPath: previewData.alt4,    label: '.alt4',    desc: 'shake' },
                 ]
                 return (
                   <div>
@@ -961,9 +980,9 @@ export default function DnaControls({ glyphs = [], fontStyle, onFontStyleChange,
                     <div style={{ background: '#1E1A14', borderRadius: 8, padding: '8px 12px', fontFamily: 'monospace', fontSize: 10, color: '#7CC4B0', lineHeight: 1.9 }}>
                       <span style={{ color: '#5C5340' }}># calt</span>{'  '}
                       <span style={{ color: '#9E9278' }}>Input: </span>
-                      <span style={{ color: '#F0EBE0' }}>{previewChar}{previewChar}{previewChar}{previewChar}</span>
+                      <span style={{ color: '#F0EBE0' }}>{previewChar}{previewChar}{previewChar}{previewChar}{previewChar}{previewChar}</span>
                       {'  →  '}
-                      <span style={{ color: '#7CC4B0' }}>.default .alt1 .alt2 .default</span>
+                      <span style={{ color: '#7CC4B0' }}>.default .alt1 .alt2 .alt3 .default .alt4</span>
                     </div>
                   </div>
                 )
@@ -987,7 +1006,7 @@ export default function DnaControls({ glyphs = [], fontStyle, onFontStyleChange,
       {activeTab === 'glyphs' && (
         <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 14, padding: '16px 20px', marginBottom: 20 }}>
           <p style={{ fontSize: 11, color: C.inkLt, marginBottom: 14 }}>
-            {charCount} characters × 3 variants
+            {charCount} characters × 5 variants
             <span style={{ marginLeft: 10, background: C.sageLt, color: C.sage, borderRadius: 4, padding: '1px 6px', fontSize: 9 }}>● = Thai non-spacing mark</span>
           </p>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(88px, 1fr))', gap: 8, maxHeight: 500, overflowY: 'auto' }}>
@@ -1148,7 +1167,7 @@ export default function DnaControls({ glyphs = [], fontStyle, onFontStyleChange,
                 ['Latin+punct', 'U+0020–U+007E'],
                 ['Digits', 'U+0030–U+0039'],
                 ['Supplementary', 'full codePointAt()'],
-                ['Variant algo', 'deformPath() v1–v3'],
+                ['Variant algo', 'deformPath() v1–v5'],
                 ['Seed', DOCUMENT_SEED.toString()],
               ].map(([k, v]) => (
                 <div key={k}>
@@ -1193,7 +1212,7 @@ export default function DnaControls({ glyphs = [], fontStyle, onFontStyleChange,
                 maxLength={64}
               />
               <span style={{ fontSize: 12, color: '#8A7B62', whiteSpace: 'nowrap', background: '#F2EDE4', borderRadius: 8, padding: '5px 12px' }}>
-                {charCount} chars × 3 = <b style={{ color: '#1A1410' }}>{totalVariants}</b> glyphs
+                {charCount} chars × 5 = <b style={{ color: '#1A1410' }}>{totalVariants}</b> glyphs
               </span>
             </div>
           </div>
