@@ -227,8 +227,8 @@ export default function PreviewCanvas({ versionedGlyphs = [], extractedGlyphs = 
   }, [requiredChars, glyphMapObj])
 
   // ── PUA Randomization ────────────────────────────────────────────────────────
-  // แปลงข้อความให้สุ่ม codepoint (Unicode / PUA-v1 / PUA-v2) ต่อตำแหน่ง
-  // ผล: ตัวอักษรเดียวกันในข้อความได้ glyph variant ต่างกันทุก position จริงๆ
+  // แปลงข้อความให้สุ่ม codepoint ต่อตำแหน่ง
+  // puaMap จาก DnaStep มี structure: { default, alt1, alt2, alt3, alt4, rotationSequence }
   const hasPua = puaMap && puaMap.size > 0
 
   const puaText = useMemo(() => {
@@ -238,10 +238,14 @@ export default function PreviewCanvas({ versionedGlyphs = [], extractedGlyphs = 
       if (/\s/.test(ch)) { pos++; return ch }
       const info = puaMap.get(ch)
       if (!info) { pos++; return ch }
-      const r    = xorshift(pos * 7919 + randomSeed * 999983)
-      const pick = Math.floor(r * 3)   // 0 = default, 1 = PUA v1, 2 = PUA v2
+      // ดึง sequence จาก rotationSequence หรือ fallback จาก alt fields
+      const seq = info.rotationSequence ?? [info.default, info.alt1, info.alt2, info.alt3, info.alt4].filter(Boolean)
+      if (!seq || seq.length === 0) { pos++; return ch }
+      const r   = xorshift(pos * 7919 + randomSeed * 999983)
+      const cp  = seq[Math.floor(r * seq.length)]
       pos++
-      const cp = pick === 0 ? info.v0 : pick === 1 ? info.v1 : info.v2
+      // ป้องกัน NaN / undefined ก่อน fromCodePoint
+      if (cp == null || !Number.isFinite(cp)) return ch
       return String.fromCodePoint(cp)
     }).join('')
   }, [text, puaMap, hasPua, randomSeed, renderMode])
@@ -680,18 +684,17 @@ export default function PreviewCanvas({ versionedGlyphs = [], extractedGlyphs = 
                     return (
                       <div>
                         <p style={{ fontSize: 8, color: T.inkLt, marginBottom: 4, letterSpacing: "0.06em" }}>
-                          CHAR → CODEPOINT (v0=original, v1=PUA+E000, v2=PUA+E400)
+                          CHAR → CODEPOINT (default / alt1–alt4)
                         </p>
                         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                           {chars.map((ch, i) => {
                             const pch = puaChars[i] ?? ch
                             const cp = pch.codePointAt(0)
                             const info = puaMap.get(ch)
-                            const isV0 = cp === info?.v0
-                            const isV1 = cp === info?.v1
-                            const isV2 = cp === info?.v2
-                            const varLabel = isV0 ? "v0" : isV1 ? "v1" : isV2 ? "v2" : "??"
-                            const varColor = isV0 ? T.inkLt : isV1 ? T.gold : isV2 ? T.sage : T.rust
+                            const seq = info?.rotationSequence ?? [info?.default, info?.alt1, info?.alt2, info?.alt3, info?.alt4].filter(Boolean)
+                            const varIdx = seq ? seq.indexOf(cp) : -1
+                            const varLabel = varIdx === 0 ? "default" : varIdx > 0 ? `alt${varIdx}` : "??"
+                            const varColor = varIdx === 0 ? T.inkLt : varIdx === 1 ? T.gold : varIdx > 1 ? T.sage : T.rust
                             return (
                               <div key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
                                 <span style={{ fontSize: 11, color: "#fff", width: 14, textAlign: "center", fontFamily: `'${FONT_FAMILY}', serif` }}>{ch}</span>
@@ -708,7 +711,7 @@ export default function PreviewCanvas({ versionedGlyphs = [], extractedGlyphs = 
                           })}
                         </div>
                         <p style={{ fontSize: 8, color: T.inkLt, marginTop: 6 }}>
-                          v0 (original) = U+0xxx · v1 = U+E0xx · v2 = U+E4xx
+                          default = original · alt1–alt4 = PUA variants
                         </p>
                       </div>
                     )
