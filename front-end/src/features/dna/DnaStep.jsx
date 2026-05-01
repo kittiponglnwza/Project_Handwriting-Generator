@@ -294,56 +294,78 @@ This is TopZ's project`
     return () => { style.remove(); URL.revokeObjectURL(url); setFontLoaded(false) }
   }, [ttfBuffer, fontFamilyName])
 
-  // ── PUA rotation: seeded-random variant per character occurrence ──
-  // ใช้ buildSeed ทำ PRNG → กด Rebuild = ลำดับ variant ใหม่ทุกครั้ง
-  // กฎ: ตัวแรกของคำ = .default เสมอ, ตัวถัดไปสุ่มจาก alt1-alt4
-  const applyPuaRotation = useMemo(() => (text, map) => {
-    if (!map || map.size === 0) return text
-
-    // Mulberry32 seeded PRNG
-    let _s = ((buildSeed ?? Math.random()) * 2654435761) >>> 0
-    const rand = () => {
+  // ── Mulberry32 seeded PRNG ────────────────────────────────────────────────
+  const makePrng = (seed) => {
+    let _s = ((seed ?? Math.random()) * 2654435761) >>> 0
+    return () => {
       _s += 0x6D2B79F5
       let t = _s
       t = Math.imul(t ^ (t >>> 15), t | 1)
       t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296
     }
+  }
+
+  // ── Build per-character render tokens: variant codepoint + micro CSS jitter ──
+  const renderTokens = useMemo(() => {
+    if (!fontLoaded || !puaMap) return null
+    const rand = makePrng(buildSeed)
 
     let isWordStart = true
-    const lastVariant = {}
-    let result = ''
+    const lastCp = {}
+    const tokens = []
 
-    for (const ch of text) {
-      if (ch === ' ' || ch === '\n' || ch === '\r') {
+    for (const ch of previewText) {
+      if (ch === '\n' || ch === '\r') {
+        tokens.push({ ch, type: 'newline' })
         isWordStart = true
-        result += ch
         continue
       }
-      const entry = map.get(ch)
-      if (!entry) { result += ch; isWordStart = false; continue }
+      if (ch === ' ') {
+        tokens.push({ ch, type: 'space' })
+        isWordStart = true
+        continue
+      }
+
+      const entry = puaMap.get(ch)
+      if (!entry) {
+        tokens.push({ ch, type: 'plain' })
+        isWordStart = false
+        continue
+      }
 
       const seq = entry.rotationSequence ?? [entry.default, entry.alt1, entry.alt2, entry.alt3, entry.alt4]
 
+      // Variant selection — no repeat, word-start = default
       let cp
       if (isWordStart) {
         cp = seq[0]
       } else {
-        const alts = seq.filter(c => c !== lastVariant[ch])
-        const pool = alts.length > 0 ? alts : seq
-        cp = pool[Math.floor(rand() * pool.length)]
+        const pool = seq.filter(c => c !== lastCp[ch])
+        cp = (pool.length > 0 ? pool : seq)[Math.floor(rand() * (pool.length > 0 ? pool.length : seq.length))]
       }
-
-      lastVariant[ch] = cp
+      lastCp[ch] = cp
       isWordStart = false
-      result += String.fromCodePoint(cp)
-    }
-    return result
-  }, [buildSeed])
 
-  const rotatedText = useMemo(() =>
-    fontLoaded && puaMap ? applyPuaRotation(previewText, puaMap) : previewText
-  , [fontLoaded, puaMap, previewText, applyPuaRotation])
+      // Micro-humanization: CSS-level noise per character
+      // ตัวแรกของคำ noise น้อยมาก (beauty rule), ตัวถัดไป noise เต็ม
+      const isFirst = cp === seq[0]
+      const n = isFirst ? 0.2 : 1.0
+
+      tokens.push({
+        ch, type: 'glyph', cp,
+        // baseline drift ±1.8% em
+        baselineShift: (rand() - 0.5) * 0.036 * n,
+        // letter-spacing ±1.5% em
+        letterSpacingEm: (rand() - 0.5) * 0.03 * n,
+        // micro-rotate ±0.8°
+        rotate: (rand() - 0.5) * 1.6 * n,
+        // x-scale ±1.5%
+        scaleX: 1 + (rand() - 0.5) * 0.03 * n,
+      })
+    }
+    return tokens
+  }, [fontLoaded, puaMap, previewText, buildSeed])
 
   const bgStyles = {
     white: { background: '#FEFCF8', color: '#1A1410' },
@@ -433,7 +455,30 @@ This is TopZ's project`
             userSelect: 'none',
           }}
         >
-          {rotatedText || <span style={{ opacity: 0.3 }}>Type here to preview the font…</span>}
+          {renderTokens
+            ? renderTokens.length === 0
+              ? <span style={{ opacity: 0.3 }}>Type here to preview the font…</span>
+              : renderTokens.map((tok, i) => {
+                  if (tok.type === 'newline') return <br key={i} />
+                  if (tok.type === 'space')   return <span key={i}> </span>
+                  if (tok.type === 'plain')   return <span key={i}>{tok.ch}</span>
+                  // type === 'glyph': render with micro-humanization CSS
+                  return (
+                    <span key={i} style={{
+                      display:         'inline-block',
+                      position:        'relative',
+                      top:             `${tok.baselineShift}em`,
+                      letterSpacing:   `${tok.letterSpacingEm}em`,
+                      transform:       `rotate(${tok.rotate}deg) scaleX(${tok.scaleX})`,
+                      transformOrigin: 'bottom center',
+                      willChange:      'transform',
+                    }}>
+                      {String.fromCodePoint(tok.cp)}
+                    </span>
+                  )
+                })
+            : previewText || <span style={{ opacity: 0.3 }}>Type here to preview the font…</span>
+          }
         </div>
         {/* Click-to-edit overlay when font loaded */}
         {fontLoaded && (
