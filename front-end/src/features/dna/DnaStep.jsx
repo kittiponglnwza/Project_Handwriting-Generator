@@ -726,83 +726,97 @@ export default function DnaControls({ glyphs = [], fontStyle, onFontStyleChange,
       {/* Tab: Overview */}
       {activeTab === 'overview' && (
         <div style={{ marginBottom: 20 }}>
-          <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 14, padding: '16px 20px', marginBottom: 14 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
-              <p style={{ fontSize: 11, fontWeight: 500, letterSpacing: '0.1em', textTransform: 'uppercase', color: C.inkLt }}>
-                1 Character → 3 Variants
-              </p>
-              {hasGlyphs && (
-                <select value={previewChar ?? ''} onChange={e => setPreviewChar(e.target.value)}
-                  style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: '5px 10px', fontSize: 12, background: C.bgCard, color: C.ink }}>
-                  {entries.map(([ch, d]) => (
-                    <option key={ch} value={ch}>{ch} — {d.unicode}</option>
-                  ))}
-                </select>
-              )}
-            </div>
-            {previewData && (
-              <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-                <div style={{ display: 'flex', gap: 12 }}>
-                  <VariantThumb ch={previewChar} svgPath={previewData.default} viewBox={previewGlyph?.viewBox} label=".default" isActive />
-                  <VariantThumb ch={previewChar} svgPath={previewData.alt1}    viewBox={previewGlyph?.viewBox} label=".alt1" borderColor={C.border} />
-                  <VariantThumb ch={previewChar} svgPath={previewData.alt2}    viewBox={previewGlyph?.viewBox} label=".alt2" borderColor={C.border} />
-                </div>
-                <div style={{ flex: 1, minWidth: 160 }}>
-                  {previewData.codepoint && (() => {
-                    const cls    = getGlyphClass(previewData.codepoint)
-                    const isMark = isThaiNonSpacing(previewData.codepoint)
-                    return (
-                      <div style={{ marginBottom: 10 }}>
-                        <p style={{ fontSize: 10, color: C.inkLt, marginBottom: 4 }}>Glyph class</p>
-                        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-                          <span style={{ background: C.bgMuted, borderRadius: 4, padding: '2px 7px', fontSize: 10, fontFamily: 'monospace', color: C.inkMd }}>{cls}</span>
-                          {isMark && (
-                            <span style={{ background: C.sageLt, borderRadius: 4, padding: '2px 7px', fontSize: 10, color: C.sage }}>non-spacing (adv=0)</span>
-                          )}
-                        </div>
-                      </div>
-                    )
-                  })()}
-                  <p style={{ fontSize: 11, color: C.inkLt, lineHeight: 1.9 }}>
-                    <b style={{ color: C.inkMd }}>.default</b> — original<br />
-                    <b style={{ color: C.inkMd }}>.alt1</b> — drooping tail<br />
-                    <b style={{ color: C.inkMd }}>.alt2</b> — wavy stroke
-                  </p>
-                  <div style={{ marginTop: 10, background: '#1E1A14', borderRadius: 8, padding: '8px 12px', fontFamily: 'monospace', fontSize: 10, color: '#7CC4B0', lineHeight: 1.9 }}>
-                    <span style={{ color: '#5C5340' }}># calt — consecutive rotation</span><br />
-                    <span style={{ color: '#9E9278' }}>Input:  </span>{previewChar}{previewChar}{previewChar}{previewChar}<br />
-                    <span style={{ color: '#9E9278' }}>Output: </span>.default .alt1 .alt2 .default
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-          <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 14, padding: '16px 20px' }}>
-            <p style={{ fontSize: 11, fontWeight: 500, letterSpacing: '0.1em', textTransform: 'uppercase', color: C.inkLt, marginBottom: 12 }}>
-              Rotating Variant System — calt (GSUB LookupType 6 Format 3)
-            </p>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 }}>
-              {['default', 'alt1', 'alt2', 'default', 'alt1', '…'].map((v, i) => (
-                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{
-                    padding: '3px 9px',
-                    background: v==='default' ? C.sageLt : v==='alt1' ? C.amberLt : v==='alt2' ? C.blushLt : C.bgMuted,
-                    border: `1px solid ${v==='default' ? C.sageMd : v==='alt1' ? C.amberMd : v==='alt2' ? C.blushMd : C.border}`,
-                    borderRadius: 6, fontSize: 10, fontFamily: 'monospace',
-                    color: v==='default' ? C.sage : v==='alt1' ? C.amber : v==='alt2' ? C.blush : C.inkLt,
-                  }}>.{v}</span>
-                  {i < 5 && <span style={{ color: C.borderMd, fontSize: 10 }}>→</span>}
-                </div>
-              ))}
-            </div>
-            <p style={{ fontSize: 10, color: C.inkLt, lineHeight: 1.7 }}>
-              Implemented as real GSUB6 chaining context lookups — not a UI label.
-              Detects repeated glyphs and cycles variants to simulate natural handwriting.
-            </p>
-          </div>
+          {/* Two-column layout: Variants left, FontStylePanel right */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, alignItems: 'start' }}>
 
-          <div style={{ marginTop: 14 }}>
-            <FontStylePanel fontStyle={fontStyle} onFontStyleChange={onFontStyleChange} />
+            {/* LEFT — Glyph variant picker */}
+            <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 14, padding: '16px 20px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
+                <p style={{ fontSize: 11, fontWeight: 500, letterSpacing: '0.1em', textTransform: 'uppercase', color: C.inkLt }}>
+                  1 Character → 3 Variants
+                </p>
+                {hasGlyphs && (
+                  <select value={previewChar ?? ''} onChange={e => setPreviewChar(e.target.value)}
+                    style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: '5px 10px', fontSize: 12, background: C.bgCard, color: C.ink }}>
+                    {entries.map(([ch, d]) => (
+                      <option key={ch} value={ch}>{ch} — {d.unicode}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              {previewData && (() => {
+                const cls    = previewData.codepoint ? getGlyphClass(previewData.codepoint) : null
+                const isMark = previewData.codepoint ? isThaiNonSpacing(previewData.codepoint) : false
+                const VARIANTS = [
+                  { key: 'default', svgPath: previewData.default, label: '.default', desc: 'original' },
+                  { key: 'alt1',    svgPath: previewData.alt1,    label: '.alt1',    desc: 'drooping tail' },
+                  { key: 'alt2',    svgPath: previewData.alt2,    label: '.alt2',    desc: 'wavy stroke' },
+                ]
+                return (
+                  <div>
+                    {/* Glyph class badge */}
+                    {cls && (
+                      <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 12 }}>
+                        <span style={{ background: C.bgMuted, borderRadius: 4, padding: '2px 7px', fontSize: 10, fontFamily: 'monospace', color: C.inkMd }}>{cls}</span>
+                        {isMark && (
+                          <span style={{ background: C.sageLt, borderRadius: 4, padding: '2px 7px', fontSize: 10, color: C.sage }}>non-spacing (adv=0)</span>
+                        )}
+                      </div>
+                    )}
+
+                    {/* 3 variant cards — horizontal, each clickable */}
+                    <div style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
+                      {VARIANTS.map(({ key, svgPath, label, desc }) => {
+                        const isActive = key === 'default'
+                        const valid = validateSvgPath(svgPath).valid
+                        return (
+                          <div key={key} style={{
+                            flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
+                            background: isActive ? C.sageLt : C.bgMuted,
+                            border: `2px solid ${isActive ? C.sage : C.border}`,
+                            borderRadius: 12, padding: '10px 8px',
+                            cursor: 'default', transition: 'all 0.15s',
+                          }}>
+                            <div style={{
+                              width: 60, height: 60, background: '#fff',
+                              border: `1px solid ${isActive ? C.sageMd : C.borderMd}`,
+                              borderRadius: 8,
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              overflow: 'hidden',
+                            }}>
+                              {valid ? (
+                                <svg viewBox={computeViewBox(svgPath)} style={{ width: '90%', height: '90%' }} preserveAspectRatio="xMidYMid meet">
+                                  <path d={svgPath} fill="none" stroke={C.ink} strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
+                                </svg>
+                              ) : (
+                                <span style={{ fontSize: 26, color: C.inkMd }}>{previewChar}</span>
+                              )}
+                            </div>
+                            <span style={{ fontSize: 9, fontFamily: 'monospace', color: isActive ? C.sage : C.inkMd, fontWeight: isActive ? 700 : 400 }}>{label}</span>
+                            <span style={{ fontSize: 9, color: C.inkLt, textAlign: 'center' }}>{desc}</span>
+                          </div>
+                        )
+                      })}
+                    </div>
+
+                    {/* calt rotation preview — compact single line */}
+                    <div style={{ background: '#1E1A14', borderRadius: 8, padding: '8px 12px', fontFamily: 'monospace', fontSize: 10, color: '#7CC4B0', lineHeight: 1.9 }}>
+                      <span style={{ color: '#5C5340' }}># calt</span>{'  '}
+                      <span style={{ color: '#9E9278' }}>Input: </span>
+                      <span style={{ color: '#F0EBE0' }}>{previewChar}{previewChar}{previewChar}{previewChar}</span>
+                      {'  →  '}
+                      <span style={{ color: '#7CC4B0' }}>.default .alt1 .alt2 .default</span>
+                    </div>
+                  </div>
+                )
+              })()}
+            </div>
+
+            {/* RIGHT — Font Style sliders */}
+            <div>
+              <FontStylePanel fontStyle={fontStyle} onFontStyleChange={onFontStyleChange} />
+            </div>
           </div>
         </div>
       )}

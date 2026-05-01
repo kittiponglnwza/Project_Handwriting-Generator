@@ -1,4 +1,6 @@
 // FontStylePanel.jsx — Roughness / neatness / slant / boldness / randomness sliders
+import { useState } from 'react'
+
 const FONT_SLIDERS = [
   { key: 'roughness',  label: 'Roughness',  min: 0,   max: 100, unit: ''  },
   { key: 'neatness',   label: 'Neatness',   min: 0,   max: 100, unit: ''  },
@@ -8,7 +10,19 @@ const FONT_SLIDERS = [
 ]
 
 export function FontStylePanel({ fontStyle, onFontStyleChange }) {
+  const [editingKey, setEditingKey] = useState(null)
+  const [editingVal, setEditingVal] = useState('')
+
   if (!fontStyle || !onFontStyleChange) return null
+
+  const commitEdit = (key, min, max) => {
+    const num = parseInt(editingVal, 10)
+    if (!isNaN(num)) {
+      onFontStyleChange(key, Math.min(max, Math.max(min, num)))
+    }
+    setEditingKey(null)
+  }
+
   return (
     <div style={{
       background: '#fff', borderRadius: 14, padding: '20px 24px',
@@ -20,13 +34,47 @@ export function FontStylePanel({ fontStyle, onFontStyleChange }) {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 32px' }}>
         {FONT_SLIDERS.map(({ key, label, min, max, unit }) => {
           const pct = ((fontStyle[key] - min) / (max - min)) * 100
+          const isEditing = editingKey === key
           return (
             <div key={key} style={{ paddingBottom: 10 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                 <label style={{ fontSize: 12, color: '#5C5040', fontWeight: 500 }}>{label}</label>
-                <span style={{ fontSize: 12, color: '#1A1410', fontWeight: 700, background: '#F2EDE4', borderRadius: 5, padding: '1px 7px', minWidth: 36, textAlign: 'center' }}>
-                  {fontStyle[key]}{unit}
-                </span>
+                {isEditing ? (
+                  <input
+                    type="text"
+                    value={editingVal}
+                    autoFocus
+                    onChange={e => setEditingVal(e.target.value)}
+                    onBlur={() => commitEdit(key, min, max)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') commitEdit(key, min, max)
+                      if (e.key === 'Escape') setEditingKey(null)
+                    }}
+                    style={{
+                      fontSize: 12, fontWeight: 700, color: '#1A1410',
+                      background: '#FBF9F5', border: '1.5px solid #2C2416',
+                      borderRadius: 5, padding: '1px 5px', width: 52,
+                      textAlign: 'center', outline: 'none', fontFamily: 'monospace',
+                    }}
+                  />
+                ) : (
+                  <span
+                    onClick={() => { setEditingKey(key); setEditingVal(String(fontStyle[key])) }}
+                    title="Click to type a value"
+                    style={{
+                      fontSize: 12, color: '#1A1410', fontWeight: 700,
+                      background: '#F2EDE4', borderRadius: 5, padding: '1px 7px',
+                      minWidth: 36, textAlign: 'center', cursor: 'text',
+                      border: '1px solid transparent',
+                      transition: 'border-color 0.12s, background 0.12s',
+                      userSelect: 'none',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = '#C4B89A'; e.currentTarget.style.background = '#EDE8DC' }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = 'transparent'; e.currentTarget.style.background = '#F2EDE4' }}
+                  >
+                    {fontStyle[key]}{unit}
+                  </span>
+                )}
               </div>
               <div style={{ position: 'relative', height: 20, display: 'flex', alignItems: 'center' }}>
                 <div style={{ position: 'absolute', left: 0, top: '50%', transform: 'translateY(-50%)', width: '100%', height: 3, background: '#E5DFD4', borderRadius: 3 }} />
