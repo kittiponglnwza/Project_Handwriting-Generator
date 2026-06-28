@@ -66,14 +66,58 @@ function validatePdf(file) {
 }
 
 // ─── Ensure jsQR is loaded (needed for QR decode) ────────────────────────────
+const JSQR_CDN_URLS = [
+  'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js',
+  'https://unpkg.com/jsqr@1.4.0/dist/jsQR.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.js',
+]
+const JSQR_TIMEOUT_MS = 5000
+
+let jsQrLoadingPromise = null
+
+function loadScriptWithTimeout(url, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script')
+    const timer = setTimeout(() => {
+      script.onload = script.onerror = null
+      reject(new Error(`Timeout loading ${url}`))
+    }, timeoutMs)
+    script.onload = () => { clearTimeout(timer); resolve() }
+    script.onerror = () => { clearTimeout(timer); reject(new Error(`Failed to load ${url}`)) }
+    script.src = url
+    document.head.appendChild(script)
+  })
+}
+
 function ensureJsQr() {
   if (window.jsQR) return Promise.resolve()
-  return new Promise((res, rej) => {
-    const s = document.createElement("script")
-    s.src = "https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"
-    s.onload = res; s.onerror = rej
-    document.head.appendChild(s)
-  }).catch(() => {}) // non-fatal — QR decode becomes best-effort
+  if (jsQrLoadingPromise) return jsQrLoadingPromise
+
+  jsQrLoadingPromise = (async () => {
+    console.log('[jsQR] Loading jsQR library…')
+    for (let i = 0; i < JSQR_CDN_URLS.length; i++) {
+      const url = JSQR_CDN_URLS[i]
+      try {
+        await loadScriptWithTimeout(url, JSQR_TIMEOUT_MS)
+        if (window.jsQR) {
+          console.log(`[jsQR] ✓ Loaded from ${new URL(url).hostname}`)
+          return
+        }
+      } catch (err) {
+        console.warn(`[jsQR] ✗ ${new URL(url).hostname} failed: ${err.message}`)
+        if (i < JSQR_CDN_URLS.length - 1) {
+          console.log(`[jsQR] Trying next CDN…`)
+        }
+      }
+    }
+    console.error('[jsQR] All CDNs failed — QR decode will be unavailable')
+    // Non-fatal: QR decode becomes best-effort, parsing can still proceed
+  })()
+
+  // Reset the cached promise on failure so a retry is possible
+  jsQrLoadingPromise.catch(() => { jsQrLoadingPromise = null })
+
+  return jsQrLoadingPromise
 }
 
 // ─── Derive character list from slot scan (fallback when no QR) ───────────────
@@ -183,7 +227,11 @@ async function parsePdf(file) {
   await ensureJsQr()
 
   const bytes = new Uint8Array(await file.arrayBuffer())
-  const loadingTask = getDocument({ data: bytes })
+  const loadingTask = getDocument({
+    data: bytes,
+    cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@5.5.207/cmaps/',
+    cMapPacked: true,
+  })
   let pdf = null
 
   try {

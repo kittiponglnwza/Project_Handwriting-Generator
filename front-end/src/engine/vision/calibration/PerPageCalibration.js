@@ -18,8 +18,9 @@ export class PerPageCalibration {
     // Sample edges at multiple angles to find dominant orientation
     const angles = []
     const step = 4 // Sample every 4 pixels for performance
-    const data = imageData.data  // ✅ fix: ต้องใช้ .data
-    let totalEdgeCount = 0  // ✅ fix: ต้องนับ total นอก loop ไม่ใช่อ่าน edgeCount จาก iteration สุดท้าย
+    const data = imageData?.data ?? imageData  // Support both ImageData objects and flat Uint8ClampedArray
+    if (!data || data.length === 0) return { rotation: 0, confidence: 0 }
+    let totalEdgeCount = 0
     
     // Detect horizontal edges
     for (let y = step; y < height - step; y += step * 4) {
@@ -75,6 +76,8 @@ export class PerPageCalibration {
    */
   detectPageScale(imageData, width, height, expectedCellSize) {
     // Find dark cell boundaries by sampling grid patterns
+    const data = imageData?.data ?? imageData  // Support both ImageData objects and flat Uint8ClampedArray
+    if (!data || data.length === 0) return { scale: 1, confidence: 0 }
     const samplePoints = 20
     let measuredSize = 0
     let validSamples = 0
@@ -85,7 +88,7 @@ export class PerPageCalibration {
       // Find consecutive dark horizontal lines (cell boundaries)
       let boundaryCount = 0
       let lastDarkX = -1
-      const data = imageData.data  // ✅ fix
+      // data is already resolved above
       
       for (let x = width * 0.1; x < width * 0.9; x += 2) {
         const idx = (y * width + Math.floor(x)) * 4
@@ -124,10 +127,11 @@ export class PerPageCalibration {
    */
   detectTranslation(imageData, width, height) {
     // Find top-left corner marker (dark L-shape)
+    const data = imageData?.data ?? imageData  // Support both ImageData objects and flat Uint8ClampedArray
+    if (!data || data.length === 0) return { translateX: 0, translateY: 0, confidence: 0 }
     const searchSize = Math.min(width, height) * 0.15
     let bestScore = 0
     let bestX = 0, bestY = 0
-    const data = imageData.data  // ✅ fix
     
     // Search for top-left corner area
     for (let y = 10; y < searchSize; y += 5) {
@@ -166,7 +170,9 @@ export class PerPageCalibration {
    * Calibrate a single page with all transforms
    */
   calibratePage(pageData, expectedGeometry) {
-    const { imageData, width, height, pageNumber } = pageData
+    const { imageData, pageNumber } = pageData
+    const width = pageData.pageWidth ?? pageData.width
+    const height = pageData.pageHeight ?? pageData.height
     
     // Detect all transforms
     const rotation = this.detectPageRotation(imageData, width, height)

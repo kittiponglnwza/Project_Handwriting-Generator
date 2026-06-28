@@ -241,7 +241,7 @@ export class VisionEngine {
     
     if (page.gridMatrix && page.cornerAnchors) {
       // Use corner anchor transformation
-      const transformedPoint = this.cornerAnchorDetection.transformGridPoint(col, row)
+      const transformedPoint = this.cornerAnchorDetection.transformGridPoint(col, row, page.gridMatrix)
       if (transformedPoint) {
         x = transformedPoint.x
         y = transformedPoint.y

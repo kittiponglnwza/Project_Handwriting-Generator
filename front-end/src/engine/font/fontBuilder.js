@@ -53,7 +53,7 @@ const FONT_VERSION = '3.0.0'
  * The sequence [0,1,2,3,0,4] ensures no adjacent repetition.
  */
 const ROTATION_SEQUENCE = [0, 1, 2, 3, 0, 4]  // indices into VARIANT_KEYS
-const VARIANT_KEYS      = ['base', 'alt1', 'alt2', 'alt3', 'alt4']
+const VARIANT_KEYS      = ['default', 'alt1', 'alt2', 'alt3', 'alt4']
 
 // ─── Log helpers ───────────────────────────────────────────────────────────────
 
@@ -501,8 +501,8 @@ export function buildGlyphMap(glyphs, seed = Math.random()) {
     map.set(ch, {
       codepoint: cp,
       unicode:   `U+${cp.toString(16).toUpperCase().padStart(4, '0')}`,
-      // version 1 (base) always on best sample
-      base:  deformPath(src(0), 1),
+      // version 1 (default) always on best sample — key matches DnaStep.jsx VARIANT_KEYS
+      default: deformPath(src(0), 1),
       // alt variants: mix deformation profile + potentially different raw samples
       alt1:  deformPath(src(0), 2),
       alt2:  deformPath(src(1), 3),
@@ -699,7 +699,7 @@ export async function compileFontBuffer(
 
   // ── Track variant usage for debug ─────────────────────────────────────────
   // variantBakeCount[key] = number of Unicode glyphs that used this variant
-  const variantBakeCount = { base: 0, alt1: 0, alt2: 0, alt3: 0, alt4: 0 }
+  const variantBakeCount = { default: 0, alt1: 0, alt2: 0, alt3: 0, alt4: 0 }
 
   addLog(emit('opentype.js loaded (local package ✓)', 6))
 
@@ -735,7 +735,7 @@ export async function compileFontBuffer(
     }
     usedUnicodes.add(cp)
 
-    const defVal = validateSvgPath(data.base)
+    const defVal = validateSvgPath(data.default)
     if (!defVal.valid) {
       const reason = `invalid base path: ${defVal.reason}`
       skipped.push({ ch, reason })
@@ -752,11 +752,11 @@ export async function compileFontBuffer(
       const glyphMeta = data.meta || {}
 
       // ── Build OT commands for all 5 variants (with memoization) ───────────
-      const allVariantKeys = ['base', 'alt1', 'alt2', 'alt3', 'alt4']
+      const allVariantKeys = ['default', 'alt1', 'alt2', 'alt3', 'alt4']
       const variantCmdsRaw = {}
 
       for (const vk of allVariantKeys) {
-        const svgPath = data[vk] ?? data.base
+        const svgPath = data[vk] ?? data.default
         const cacheKey = `${cp}:${vk}:${svgPath.slice(0, 32)}`
         let cmds = otCache.get(cacheKey)
         if (!cmds) {
@@ -786,11 +786,11 @@ export async function compileFontBuffer(
       //
       // For the baked Unicode glyph: always use `base` → ensures the first
       // time any character is seen in rendered text it shows the cleanest form.
-      const bakedKey = 'base'
+      const bakedKey = 'default'
       variantBakeCount[bakedKey]++
 
       const bakedCmds = applyPlacementNoise(variantCmds[bakedKey], _rrand, true)
-      const metrics   = computeGlyphMetrics(data.base, cp)
+      const metrics   = computeGlyphMetrics(data.default, cp)
       const humanAdv  = humanizeAdvance(metrics.advanceWidth, _rrand)
 
       // ── Default (Unicode) glyph — always baked as `base` ──────────────────

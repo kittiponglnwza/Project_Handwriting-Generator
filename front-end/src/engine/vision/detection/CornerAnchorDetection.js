@@ -187,7 +187,7 @@ export class CornerAnchorDetection {
       [bottomRight.x, bottomRight.y]
     ]
 
-    this.gridMatrix = this.solvePerspectiveTransform(srcPoints, dstPoints)
+    this.gridMatrix = Object.freeze(this.solvePerspectiveTransform(srcPoints, dstPoints))
     return this.gridMatrix
   }
 
@@ -291,10 +291,11 @@ export class CornerAnchorDetection {
   /**
    * Transform ideal grid coordinates to actual page coordinates
    */
-  transformGridPoint(col, row) {
-    if (!this.gridMatrix) return null
+  transformGridPoint(col, row, matrix = null) {
+    const m = matrix ?? this.gridMatrix
+    if (!m) return null
 
-    const [h11, h12, h13, h21, h22, h23, h31, h32, h33] = this.gridMatrix
+    const [h11, h12, h13, h21, h22, h23, h31, h32, h33] = m
 
     const x = col
     const y = row
