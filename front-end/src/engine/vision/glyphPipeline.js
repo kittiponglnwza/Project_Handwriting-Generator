@@ -106,8 +106,89 @@ export function getPageCapacity(pageHeight, startY, cellSize, gap) {
 
 // ───────────────────────────────────────────────────────────────
 // SVG Tracing: แปลง inkCanvas → SVG path
-// ใช้ column-based filled outline ที่ reliable และ font-valid
+// ใช้ contour-based outline tracing เพื่อสร้าง filled shapes
+// แทน centerline skeleton ที่ดูเป็นเส้นบางๆ
 // ───────────────────────────────────────────────────────────────
+
+/**
+ * Trace contour outlines from ink mask using Moore neighborhood border walking.
+ * Returns an array of closed contour polygons [{x,y}[]] in pixel coordinates.
+ */
+function traceContours(mask, width, height, bxMin, bxMax, byMin, byMax) {
+  const visited = new Uint8Array(width * height)
+  const contours = []
+
+  // Moore neighborhood: 8 directions (clockwise from right)
+  const dx8 = [1, 1, 0, -1, -1, -1, 0, 1]
+  const dy8 = [0, 1, 1, 1, 0, -1, -1, -1]
+
+  const isInk = (x, y) =>
+    x >= 0 && x < width && y >= 0 && y < height && mask[y * width + x] === 1
+
+  for (let sy = byMin; sy <= byMax; sy++) {
+    for (let sx = bxMin; sx <= bxMax; sx++) {
+      if (!isInk(sx, sy) || visited[sy * width + sx]) continue
+      // Check this is a border pixel (has at least one non-ink neighbor)
+      let isBorder = false
+      for (let d = 0; d < 8; d++) {
+        if (!isInk(sx + dx8[d], sy + dy8[d])) { isBorder = true; break }
+      }
+      if (!isBorder) continue
+
+      // Walk the border using Moore neighborhood tracing
+      const contour = []
+      let cx = sx, cy = sy
+      let dir = 7 // start looking from top-left
+      let steps = 0
+      const MAX_STEPS = (bxMax - bxMin + byMax - byMin + 4) * 8
+
+      do {
+        contour.push({ x: cx, y: cy })
+        visited[cy * width + cx] = 1
+
+        // Search clockwise from (dir+1) % 8 for next border pixel
+        let found = false
+        const startDir = (dir + 5) % 8 // backtrack: start from opposite+1
+        for (let i = 0; i < 8; i++) {
+          const nd = (startDir + i) % 8
+          const nx = cx + dx8[nd]
+          const ny = cy + dy8[nd]
+          if (isInk(nx, ny)) {
+            dir = nd
+            cx = nx
+            cy = ny
+            found = true
+            break
+          }
+        }
+        if (!found) break
+        steps++
+      } while ((cx !== sx || cy !== sy) && steps < MAX_STEPS)
+
+      // Only keep contours with enough points to form a shape
+      if (contour.length >= 6) {
+        contours.push(contour)
+      }
+    }
+  }
+
+  return contours
+}
+
+/**
+ * Subsample a contour to reduce point count while preserving shape.
+ * Takes every Nth point, always keeping first and last.
+ */
+function subsampleContour(points, targetCount) {
+  if (points.length <= targetCount) return points
+  const step = (points.length - 1) / (targetCount - 1)
+  const result = []
+  for (let i = 0; i < targetCount; i++) {
+    result.push(points[Math.min(Math.round(i * step), points.length - 1)])
+  }
+  return result
+}
+
 function traceToSVGPath(inkCanvas, width, height, _ch = '') {
   try {
     const ctx2 = inkCanvas.getContext("2d")
@@ -117,7 +198,6 @@ function traceToSVGPath(inkCanvas, width, height, _ch = '') {
     // ใช้ buildInkOnlyImageData เพื่อกรอง blue guideline (#A8C1DD) และ background ออก
     // ก่อนสร้าง mask — เหมือนกับที่ extractGlyphsFromCanvas ทำ
     const inkImageData = buildInkOnlyImageData(rawImageData, width, height)
-    const { data } = inkImageData
 
     // ── Build ink mask (alpha=0 หมายถึง non-ink จาก buildInkOnlyImageData) ──
     const mask = new Uint8Array(width * height)
@@ -148,27 +228,16 @@ function traceToSVGPath(inkCanvas, width, height, _ch = '') {
     const PAD_X = 5
 
     // ── Clean baseline-anchored mapping ──────────────────────────────────────
-    // หลักการ: วาง ink ให้ก้น (byMax) อยู่ที่ SVG_BASELINE=80 เสมอ
-    // scale proportionally จาก ink pixel → SVG units
-    // ไม่ทำ zone-based scaling ใน step นี้ — fontBuilder จัดการเอง
-    //
-    // SVG_BASELINE = 80 (คงที่ทุกตัว)
-    // ink height bh → scale ให้สูงสุดไม่เกิน SVG_BASELINE (=80 units)
-    // ทำให้ตัวสูงสุดแตะ svgY=0 พอดี (ไม่ overflow ออกนอก viewBox)
     const SVG_BASELINE = 80
     const MAX_HEIGHT   = SVG_BASELINE
 
     // ── Descender letters: j g p q y ────────────────────────────────────────
-    // ปัญหาเดิม: anchor byMax (ก้นสุดของ ink) → SVG y=80 เสมอ
-    // ผลลัพธ์: ขาของ j ถูกดึงขึ้นมาอยู่ที่ y=80 พอดี ไม่มี coordinate เกิน 80
-    // แก้: anchor ที่ baseline จริงของ cell (80% ของ height) แทน
-    // → ขาที่ยื่นลงจาก baseline จะมี y > 80 → fontBuilder แปลงเป็น negative fu ✓
     const DESCENDER_CHARS = new Set(["j", "g", "p", "q", "y"])
     const isDescender = DESCENDER_CHARS.has(_ch)
 
     let anchorPx, scale
     if (isDescender) {
-      const cellBaseline_px = height * (SVG_BASELINE / 100)  // 80% ของ cell height
+      const cellBaseline_px = height * (SVG_BASELINE / 100)
       anchorPx = cellBaseline_px
       const bodyHeight_px = Math.max(cellBaseline_px - byMin, 1)
       scale = Math.min(SVG_BASELINE / bodyHeight_px, SVG_BASELINE / 20)
@@ -178,150 +247,51 @@ function traceToSVGPath(inkCanvas, width, height, _ch = '') {
     }
 
     const toSvgX = x => PAD_X + ((x - bxMin) / bw) * (100 - PAD_X * 2)
-    // y > anchorPx → svgY > 80 → descender tail ✓
     const toSvgY = y => SVG_BASELINE - (anchorPx - y) * scale
 
-    // ── Centerline / medial-axis tracing ─────────────────────────────────────
-    // แทน silhouette outline ด้วย centerline จริงๆ: หา midpoint ของแต่ละ column
-    // และแต่ละ row แล้วนำมา cluster เป็น stroke segments
-    //
-    // Algorithm: สำหรับแต่ละ row หา mid-y ของ ink run แต่ละ run
-    // (midpoint ระหว่าง top และ bottom ของ ink ใน column นั้น)
-    // จากนั้น chain ต่อกันเป็น polyline และ smooth ด้วย Catmull-Rom
+    // ── Contour-based outline tracing ─────────────────────────────────────────
+    // Trace the border pixels of ink regions to produce closed outlines
+    // (filled shapes) instead of thin centerline skeletons
+    const contours = traceContours(mask, width, height, bxMin, bxMax, byMin, byMax)
 
-    // Step 1: หา centerline points ทุก column (x) ในแต่ละ connected run
-    // ใช้ column scan (vertical) เพราะ handwriting ส่วนใหญ่ไหลซ้าย-ขวา
-    const colCenters = [] // [{ x, y }] centerline per column
-    for (let x = bxMin; x <= bxMax; x++) {
-      let runStart = -1
-      for (let y = byMin; y <= byMax + 1; y++) {
-        const ink = y <= byMax && mask[y * width + x] === 1
-        if (ink && runStart < 0) { runStart = y }
-        else if (!ink && runStart >= 0) {
-          const midY = (runStart + y - 1) / 2
-          colCenters.push({ x, y: midY })
-          runStart = -1
+    let pathCmds = []
+
+    if (contours.length > 0) {
+      // Use contour outlines → filled shapes
+      for (const contour of contours) {
+        // Subsample large contours to keep path size reasonable
+        const maxPts = Math.min(200, Math.max(20, Math.round(contour.length / 3)))
+        const sampled = subsampleContour(contour, maxPts)
+
+        // Convert to SVG coordinates
+        const svgPts = sampled.map(p => ({ x: toSvgX(p.x), y: toSvgY(p.y) }))
+
+        // Simplify with tight epsilon for smooth curves
+        const simplified = dpSimplify(svgPts, 0.35)
+        if (simplified.length < 3) continue
+
+        // Build closed path with smooth Catmull-Rom curves
+        let d = `M ${simplified[0].x.toFixed(1)} ${simplified[0].y.toFixed(1)}`
+        for (let k = 0; k < simplified.length; k++) {
+          const p0 = simplified[(k - 1 + simplified.length) % simplified.length]
+          const p1 = simplified[k]
+          const p2 = simplified[(k + 1) % simplified.length]
+          const p3 = simplified[(k + 2) % simplified.length]
+          const tension = 0.25
+          const cp1x = p1.x + (p2.x - p0.x) * tension
+          const cp1y = p1.y + (p2.y - p0.y) * tension
+          const cp2x = p2.x - (p3.x - p1.x) * tension
+          const cp2y = p2.y - (p3.y - p1.y) * tension
+          d += ` C ${cp1x.toFixed(1)} ${cp1y.toFixed(1)}, ${cp2x.toFixed(1)} ${cp2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`
         }
+        d += ' Z'
+        pathCmds.push(d)
       }
     }
 
-    // Step 2: ทำเหมือนกันกับ row scan เพื่อจับ vertical strokes
-    const rowCenters = []
-    for (let y = byMin; y <= byMax; y++) {
-      let runStart = -1
-      for (let x = bxMin; x <= bxMax + 1; x++) {
-        const ink = x <= bxMax && mask[y * width + x] === 1
-        if (ink && runStart < 0) { runStart = x }
-        else if (!ink && runStart >= 0) {
-          const midX = (runStart + x - 1) / 2
-          rowCenters.push({ x: midX, y })
-          runStart = -1
-        }
-      }
-    }
-
-    // Step 3: รวม centerline points และ sort ตาม x, y
-    // ลด density โดย grid-quantize เพื่อลด noise
-    const QUANT = Math.max(2, Math.round(Math.min(bw, bh) / 30))
-    const seen = new Set()
-    const centers = []
-    for (const p of [...colCenters, ...rowCenters]) {
-      const qx = Math.round(p.x / QUANT) * QUANT
-      const qy = Math.round(p.y / QUANT) * QUANT
-      const key = `${qx},${qy}`
-      if (!seen.has(key)) { seen.add(key); centers.push({ x: qx, y: qy }) }
-    }
-
-    if (centers.length < 2) return null
-
-    // Step 4a: BFS cluster — จัดกลุ่ม points ที่ใกล้กันเป็น stroke แยก
-    // ป้องกันการเชื่อม stroke คนละกลุ่ม (=, ", [], {}, ; ฯลฯ)
-    const CONNECT_R = QUANT * 4
-    const CONNECT_R2 = CONNECT_R * CONNECT_R
-    const clusterOf = new Int32Array(centers.length).fill(-1)
-    let numClusters = 0
-
-    for (let i = 0; i < centers.length; i++) {
-      if (clusterOf[i] >= 0) continue
-      const cid = numClusters++
-      const queue = [i]
-      clusterOf[i] = cid
-      while (queue.length) {
-        const cur = queue.pop()
-        for (let j = 0; j < centers.length; j++) {
-          if (clusterOf[j] >= 0) continue
-          const dx = centers[j].x - centers[cur].x
-          const dy = centers[j].y - centers[cur].y
-          if (dx * dx + dy * dy <= CONNECT_R2) {
-            clusterOf[j] = cid
-            queue.push(j)
-          }
-        }
-      }
-    }
-
-    // Step 4b: ภายในแต่ละ cluster ทำ nearest-neighbor chain (ระยะสั้น)
-    // chains เป็น array ของ {x,y} point objects (SVG coords แล้ว)
-    const chains = []
-    for (let cid = 0; cid < numClusters; cid++) {
-      const cPts = centers.filter((_, i) => clusterOf[i] === cid)
-      if (cPts.length < 2) continue
-      // sort ตาม x ก่อน (handwriting ไหลซ้าย→ขวา)
-      cPts.sort((a, b) => a.x - b.x || a.y - b.y)
-
-      const usedLocal = new Uint8Array(cPts.length)
-      for (let si = 0; si < cPts.length; si++) {
-        if (usedLocal[si]) continue
-        const chain = [si]
-        usedLocal[si] = 1
-        let cur = si
-        for (;;) {
-          let best = -1, bestD = Infinity
-          for (let j = 0; j < cPts.length; j++) {
-            if (usedLocal[j]) continue
-            const dx = cPts[j].x - cPts[cur].x
-            const dy = cPts[j].y - cPts[cur].y
-            const d = dx * dx + dy * dy
-            if (d < bestD) { bestD = d; best = j }
-          }
-          if (best < 0 || bestD > CONNECT_R2 * 2.25) break
-          chain.push(best)
-          usedLocal[best] = 1
-          cur = best
-        }
-        if (chain.length >= 2) {
-          // แปลงเป็น SVG coords ตรงนี้เลย
-          chains.push(chain.map(ci => ({
-            x: toSvgX(cPts[ci].x),
-            y: toSvgY(cPts[ci].y),
-          })))
-        }
-      }
-    }
-
-    if (chains.length === 0) return null
-
-    // Step 5: แปลง chains เป็น SVG path ด้วย Catmull-Rom → cubic bezier
-    const pathCmds = []
-    for (const rawPts of chains) {
-      if (rawPts.length < 2) continue
-      const simplified = dpSimplify(rawPts, 0.8)
-      if (simplified.length < 2) continue
-
-      let d = `M ${simplified[0].x.toFixed(1)} ${simplified[0].y.toFixed(1)}`
-      for (let k = 0; k < simplified.length - 1; k++) {
-        const p0 = simplified[Math.max(0, k - 1)]
-        const p1 = simplified[k]
-        const p2 = simplified[k + 1]
-        const p3 = simplified[Math.min(simplified.length - 1, k + 2)]
-        const tension = 0.4
-        const cp1x = p1.x + (p2.x - p0.x) * tension
-        const cp1y = p1.y + (p2.y - p0.y) * tension
-        const cp2x = p2.x - (p3.x - p1.x) * tension
-        const cp2y = p2.y - (p3.y - p1.y) * tension
-        d += ` C ${cp1x.toFixed(1)} ${cp1y.toFixed(1)}, ${cp2x.toFixed(1)} ${cp2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`
-      }
-      pathCmds.push(d)
+    // Fallback: if contour tracing produced nothing, use centerline as before
+    if (pathCmds.length === 0) {
+      pathCmds = traceCenterlineFallback(mask, width, height, bxMin, bxMax, byMin, byMax, toSvgX, toSvgY)
     }
 
     if (pathCmds.length === 0) return null
@@ -340,6 +310,116 @@ function traceToSVGPath(inkCanvas, width, height, _ch = '') {
   } catch {
     return null
   }
+}
+
+/**
+ * Centerline fallback tracer — used when contour tracing fails
+ * (e.g., very thin 1-2px strokes where contours are degenerate)
+ */
+function traceCenterlineFallback(mask, width, height, bxMin, bxMax, byMin, byMax, toSvgX, toSvgY) {
+  const bw = Math.max(bxMax - bxMin, 1)
+  const bh = Math.max(byMax - byMin, 1)
+  const QUANT = Math.max(2, Math.round(Math.min(bw, bh) / 30))
+
+  // Column scan: find midpoints of vertical ink runs
+  const colCenters = []
+  for (let x = bxMin; x <= bxMax; x++) {
+    let runStart = -1
+    for (let y = byMin; y <= byMax + 1; y++) {
+      const ink = y <= byMax && mask[y * width + x] === 1
+      if (ink && runStart < 0) { runStart = y }
+      else if (!ink && runStart >= 0) {
+        colCenters.push({ x, y: (runStart + y - 1) / 2 })
+        runStart = -1
+      }
+    }
+  }
+
+  // Row scan: find midpoints of horizontal ink runs
+  const rowCenters = []
+  for (let y = byMin; y <= byMax; y++) {
+    let runStart = -1
+    for (let x = bxMin; x <= bxMax + 1; x++) {
+      const ink = x <= bxMax && mask[y * width + x] === 1
+      if (ink && runStart < 0) { runStart = x }
+      else if (!ink && runStart >= 0) {
+        rowCenters.push({ x: (runStart + x - 1) / 2, y })
+        runStart = -1
+      }
+    }
+  }
+
+  // Deduplicate via grid quantization
+  const seen = new Set()
+  const centers = []
+  for (const p of [...colCenters, ...rowCenters]) {
+    const qx = Math.round(p.x / QUANT) * QUANT
+    const qy = Math.round(p.y / QUANT) * QUANT
+    const key = `${qx},${qy}`
+    if (!seen.has(key)) { seen.add(key); centers.push({ x: qx, y: qy }) }
+  }
+  if (centers.length < 2) return []
+
+  // BFS cluster
+  const CONNECT_R = QUANT * 4
+  const CONNECT_R2 = CONNECT_R * CONNECT_R
+  const clusterOf = new Int32Array(centers.length).fill(-1)
+  let numClusters = 0
+  for (let i = 0; i < centers.length; i++) {
+    if (clusterOf[i] >= 0) continue
+    const cid = numClusters++
+    const queue = [i]
+    clusterOf[i] = cid
+    while (queue.length) {
+      const cur = queue.pop()
+      for (let j = 0; j < centers.length; j++) {
+        if (clusterOf[j] >= 0) continue
+        const dx = centers[j].x - centers[cur].x
+        const dy = centers[j].y - centers[cur].y
+        if (dx * dx + dy * dy <= CONNECT_R2) { clusterOf[j] = cid; queue.push(j) }
+      }
+    }
+  }
+
+  // Nearest-neighbor chain per cluster
+  const pathCmds = []
+  for (let cid = 0; cid < numClusters; cid++) {
+    const cPts = centers.filter((_, i) => clusterOf[i] === cid)
+    if (cPts.length < 2) continue
+    cPts.sort((a, b) => a.x - b.x || a.y - b.y)
+    const usedLocal = new Uint8Array(cPts.length)
+    for (let si = 0; si < cPts.length; si++) {
+      if (usedLocal[si]) continue
+      const chain = [si]; usedLocal[si] = 1; let cur = si
+      for (;;) {
+        let best = -1, bestD = Infinity
+        for (let j = 0; j < cPts.length; j++) {
+          if (usedLocal[j]) continue
+          const dx = cPts[j].x - cPts[cur].x, dy = cPts[j].y - cPts[cur].y
+          const d = dx * dx + dy * dy
+          if (d < bestD) { bestD = d; best = j }
+        }
+        if (best < 0 || bestD > CONNECT_R2 * 2.25) break
+        chain.push(best); usedLocal[best] = 1; cur = best
+      }
+      if (chain.length >= 2) {
+        const svgPts = chain.map(ci => ({ x: toSvgX(cPts[ci].x), y: toSvgY(cPts[ci].y) }))
+        const simplified = dpSimplify(svgPts, 0.35)
+        if (simplified.length < 2) continue
+        let d = `M ${simplified[0].x.toFixed(1)} ${simplified[0].y.toFixed(1)}`
+        for (let k = 0; k < simplified.length - 1; k++) {
+          const p0 = simplified[Math.max(0, k - 1)]
+          const p1 = simplified[k]
+          const p2 = simplified[k + 1]
+          const p3 = simplified[Math.min(simplified.length - 1, k + 2)]
+          const tension = 0.25
+          d += ` C ${(p1.x + (p2.x - p0.x) * tension).toFixed(1)} ${(p1.y + (p2.y - p0.y) * tension).toFixed(1)}, ${(p2.x - (p3.x - p1.x) * tension).toFixed(1)} ${(p2.y - (p3.y - p1.y) * tension).toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`
+        }
+        pathCmds.push(d)
+      }
+    }
+  }
+  return pathCmds
 }
 
 /** Douglas-Peucker polyline simplification */
